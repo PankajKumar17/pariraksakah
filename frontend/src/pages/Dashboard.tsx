@@ -179,9 +179,9 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Page header + live/demo badge */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-white tracking-wide">Security Operations Center</h1>
-        <div className="flex items-center gap-3 text-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <h1 className="text-lg sm:text-xl font-bold text-white tracking-wide">Security Operations Center</h1>
+        <div className="flex items-center gap-2 text-xs flex-wrap">
           {lastUpdated && (
             <span className="text-gray-500">Updated {lastUpdated.toLocaleTimeString()}</span>
           )}
@@ -204,7 +204,7 @@ export default function Dashboard() {
       </div>
 
       {/* KPI Row */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <KPICard
           label="Events (24h)"
           value={metrics.total_events_24h.toLocaleString()}
@@ -229,15 +229,15 @@ export default function Dashboard() {
       </div>
 
       {/* Main Grid */}
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid grid-cols-12 gap-3 sm:gap-4">
         {/* Threat Globe */}
-        <div className="col-span-5 card">
+        <div className="col-span-12 lg:col-span-5 card">
           <div className="card-header">Global Threat Map</div>
           <ThreatGlobe />
         </div>
 
         {/* Event Timeline */}
-        <div className="col-span-7 card">
+        <div className="col-span-12 lg:col-span-7 card">
           <div className="card-header">Event Volume (24h)</div>
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={timeSeriesData}>
@@ -274,7 +274,7 @@ export default function Dashboard() {
         </div>
 
         {/* Alert Severity Breakdown */}
-        <div className="col-span-4 card">
+        <div className="col-span-12 md:col-span-6 lg:col-span-4 card">
           <div className="card-header">Alert Severity</div>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
@@ -311,7 +311,7 @@ export default function Dashboard() {
         </div>
 
         {/* Top Attack Types */}
-        <div className="col-span-4 card">
+        <div className="col-span-12 md:col-span-6 lg:col-span-4 card">
           <div className="card-header">Top Attack Types</div>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={metrics.top_attack_types} layout="vertical">
@@ -332,7 +332,7 @@ export default function Dashboard() {
         </div>
 
         {/* Live Alert Feed */}
-        <div className="col-span-4 card">
+        <div className="col-span-12 lg:col-span-4 card">
           <div className="card-header">Live Alerts</div>
           <AlertFeed alerts={alerts.slice(0, 15)} />
         </div>
@@ -341,7 +341,7 @@ export default function Dashboard() {
         {services.length > 0 && (
           <div className="col-span-12 card">
             <div className="card-header">Backend Service Health</div>
-            <div className="grid grid-cols-4 gap-x-8 gap-y-1">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 sm:gap-x-8 gap-y-1">
               {services.map((svc: any) => (
                 <ServiceBadge
                   key={svc.name}
