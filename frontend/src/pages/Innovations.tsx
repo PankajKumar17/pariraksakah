@@ -135,14 +135,14 @@ export default function Innovations() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">8 Breakthrough Innovations</h1>
+          <h1 className="text-xl sm:text-2xl font-bold">8 Breakthrough Innovations</h1>
           <p className="text-gray-500 text-sm mt-1">
             Real-time status of Parirakṣakaḥ&apos;s unique defense capabilities
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-shrink-0">
           <span className="badge badge-low">{activeCount} Active</span>
           {degradedCount > 0 && (
             <span className="badge badge-medium">{degradedCount} Degraded</span>
@@ -151,7 +151,7 @@ export default function Innovations() {
       </div>
 
       {/* Innovation Grid */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {INNOVATIONS.map((innovation) => {
           const style = STATUS_STYLES[innovation.status];
           return (

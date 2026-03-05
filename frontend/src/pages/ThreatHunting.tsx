@@ -114,9 +114,9 @@ export default function ThreatHunting() {
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid grid-cols-12 gap-3 sm:gap-4">
         {/* Attack Graph (D3-style with SVG) */}
-        <div className="col-span-8 card">
+        <div className="col-span-12 lg:col-span-8 card">
           <div className="card-header">Attack Graph</div>
           <svg width="100%" height="400" viewBox="0 0 800 400" className="rounded-lg">
             <defs>
@@ -207,7 +207,7 @@ export default function ThreatHunting() {
           </svg>
 
           {/* Legend */}
-          <div className="flex gap-4 mt-3 text-xs text-gray-400">
+          <div className="flex flex-wrap gap-3 mt-3 text-xs text-gray-400">
             {Object.entries(NODE_COLORS).map(([type, color]) => (
               <span key={type} className="flex items-center gap-1">
                 <span className="w-3 h-3 rounded-full" style={{ background: color }} />
@@ -218,7 +218,7 @@ export default function ThreatHunting() {
         </div>
 
         {/* Node Detail Panel */}
-        <div className="col-span-4 card">
+        <div className="col-span-12 lg:col-span-4 card">
           <div className="card-header">Node Details</div>
           {selectedNode ? (
             <div className="space-y-3">

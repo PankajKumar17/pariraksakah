@@ -122,25 +122,25 @@ export default function IncidentResponse() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid grid-cols-12 gap-3 sm:gap-4">
         {/* Playbook Library */}
-        <div className="col-span-4 card">
+        <div className="col-span-12 lg:col-span-4 card">
           <div className="card-header">Playbook Library</div>
           <div className="space-y-2">
             {PLAYBOOKS.map((pb) => (
               <div
                 key={pb.name}
-                className="flex items-center justify-between p-3 bg-[#0F172A] rounded-lg hover:bg-[#0F172A]/70 transition-colors"
+                className="flex flex-wrap items-start sm:items-center justify-between gap-2 p-3 bg-[#0F172A] rounded-lg hover:bg-[#0F172A]/70 transition-colors"
               >
-                <div>
-                  <div className="text-sm font-medium text-gray-200">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-200 truncate">
                     {pb.name.replace(/_/g, ' ')}
                   </div>
-                  <div className="text-xs text-gray-500 mt-0.5">
-                    {pb.steps} steps · trigger: {pb.trigger}
+                  <div className="text-xs text-gray-500 mt-0.5 truncate">
+                    {pb.steps} steps · {pb.trigger}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   <span className={`badge ${SEVERITY_STYLES[pb.severity]}`}>
                     {pb.severity}
                   </span>
@@ -154,7 +154,7 @@ export default function IncidentResponse() {
         </div>
 
         {/* Active Incidents */}
-        <div className="col-span-8 space-y-4">
+        <div className="col-span-12 lg:col-span-8 space-y-4">
           {/* Incident Selector */}
           <div className="card">
             <div className="card-header">Active Incidents</div>
@@ -165,26 +165,25 @@ export default function IncidentResponse() {
                   <div
                     key={inc.id}
                     onClick={() => setSelectedIncident(inc)}
-                    className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
+                    className={`flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2 p-3 rounded-lg cursor-pointer transition-colors ${
                       selectedIncident.id === inc.id
                         ? 'bg-[#6C63FF]/10 border border-[#6C63FF]/30'
                         : 'bg-[#0F172A] hover:bg-[#0F172A]/70'
                     }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <span className={`badge ${SEVERITY_STYLES[inc.severity]}`}>
+                    <div className="flex items-start sm:items-center gap-3 min-w-0">
+                      <span className={`badge ${SEVERITY_STYLES[inc.severity]} flex-shrink-0`}>
                         {inc.severity}
                       </span>
-                      <div>
-                        <div className="text-sm font-medium">{inc.title}</div>
-                        <div className="text-xs text-gray-500">
-                          {inc.id} · Playbook: {inc.playbook} · Started:{' '}
-                          {new Date(inc.started_at).toLocaleTimeString()}
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium break-words">{inc.title}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {inc.id} · {inc.playbook} · {new Date(inc.started_at).toLocaleTimeString()}
                         </div>
                       </div>
                     </div>
                     <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${statusStyle.bg} ${statusStyle.text}`}
+                      className={`px-2 py-1 rounded-full text-xs font-medium flex-shrink-0 ${statusStyle.bg} ${statusStyle.text}`}
                     >
                       {inc.status}
                     </span>
