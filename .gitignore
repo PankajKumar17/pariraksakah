@@ -1,0 +1,53 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+
+# Docker
+docker-compose.override.yml
+
+# ML artifacts
+ml-models/saved/*.pt
+ml-models/saved/*.onnx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+target/
+dist/
+build/
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# Keys and secrets
+*.pem
+*.key
+keys/
+
+# Datasets (large files)
+datasets/*.csv
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml

@@ -1,0 +1,269 @@
+name: CyberShield-X CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ─── Stage 1: Code Quality & SAST ─────────────────────────
+  code-quality:
+    name: Code Quality & SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Semgrep SAST Scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/golang
+            p/typescript
+            p/security-audit
+            p/owasp-top-ten
+
+      - name: Bandit (Python Security)
+        run: |
+          pip install bandit
+          find services -name "*.py" | xargs bandit -r -ll -ii || true
+
+      - name: gosec (Go Security)
+        uses: securego/gosec@master
+        with:
+          args: ./services/access-control/... ./services/incident-response/... ./services/swarm-agent/... ./services/api-gateway/...
+
+      - name: Clippy (Rust Linting)
+        run: |
+          cd services/self-healing
+          cargo clippy -- -D warnings || true
+
+  # ─── Stage 2: Unit Tests ───────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    strategy:
+      matrix:
+        service:
+          - { name: threat-detection, lang: python, path: services/threat-detection }
+          - { name: anti-phishing, lang: python, path: services/anti-phishing }
+          - { name: bio-auth, lang: python, path: services/bio-auth }
+          - { name: cognitive-firewall, lang: python, path: services/cognitive-firewall }
+          - { name: access-control, lang: go, path: services/access-control }
+          - { name: incident-response, lang: go, path: services/incident-response }
+          - { name: swarm-agent, lang: go, path: services/swarm-agent }
+          - { name: api-gateway, lang: go, path: services/api-gateway }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: matrix.service.lang == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Python Tests
+        if: matrix.service.lang == 'python'
+        run: |
+          cd ${{ matrix.service.path }}
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+          pytest tests/ --cov=src --cov-report=xml --cov-fail-under=80 || true
+
+      - name: Set up Go
+        if: matrix.service.lang == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Run Go Tests
+        if: matrix.service.lang == 'go'
+        run: |
+          cd ${{ matrix.service.path }}
+          go test -v -coverprofile=coverage.out -covermode=atomic ./... || true
+          go tool cover -func=coverage.out || true
+
+  # ─── Stage 3: Build Docker Images ─────────────────────────
+  build:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service:
+          - threat-detection
+          - access-control
+          - anti-phishing
+          - incident-response
+          - bio-auth
+          - swarm-agent
+          - cognitive-firewall
+          - self-healing
+          - api-gateway
+          - frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service }}.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.spdx.json
+
+  # ─── Stage 4: Container Security Scan ─────────────────────
+  container-scan:
+    name: Container Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        service:
+          - threat-detection
+          - access-control
+          - anti-phishing
+          - incident-response
+          - bio-auth
+          - swarm-agent
+          - cognitive-firewall
+          - self-healing
+          - api-gateway
+    steps:
+      - name: Trivy Vulnerability Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL
+          ignore-unfixed: true
+
+  # ─── Stage 5: IaC Security Scan ───────────────────────────
+  iac-scan:
+    name: Infrastructure-as-Code Scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkov Scan (Terraform + K8s)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infrastructure/
+          framework: terraform,kubernetes
+          soft_fail: true
+
+      - name: kube-score
+        run: |
+          curl -sL https://github.com/zegl/kube-score/releases/download/v1.17.0/kube-score_1.17.0_linux_amd64.tar.gz | tar xz
+          find infrastructure/kubernetes -name "*.yaml" | xargs ./kube-score score || true
+
+  # ─── Stage 6: Deploy to Staging ────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [container-scan, iac-scan]
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.13.0
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+
+      - name: Helm Upgrade (Staging)
+        run: |
+          helm upgrade --install cybershield-x infrastructure/helm/ \
+            --namespace cybershield-staging \
+            --create-namespace \
+            --set global.image.tag=${{ github.sha }} \
+            --set global.environment=staging \
+            --wait --timeout 10m
+
+  # ─── Stage 7: Integration Tests ────────────────────────────
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Integration Tests
+        run: |
+          pip install pytest httpx
+          pytest tests/integration/ -v --tb=short
+        env:
+          API_BASE_URL: ${{ secrets.STAGING_API_URL }}
+
+  # ─── Stage 8: Deploy to Production ────────────────────────
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: integration-test
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://cybershield.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.13.0
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PROD }}
+
+      - name: Helm Upgrade (Production)
+        run: |
+          helm upgrade --install cybershield-x infrastructure/helm/ \
+            --namespace cybershield \
+            --set global.image.tag=${{ github.sha }} \
+            --set global.environment=production \
+            --wait --timeout 15m

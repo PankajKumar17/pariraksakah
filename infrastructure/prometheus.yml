@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "threat-detection"
+    static_configs:
+      - targets: ["threat-detection:8001"]
+    metrics_path: /metrics
+
+  - job_name: "access-control"
+    static_configs:
+      - targets: ["access-control:8002"]
+
+  - job_name: "anti-phishing"
+    static_configs:
+      - targets: ["anti-phishing:8003"]
+    metrics_path: /metrics
+
+  - job_name: "incident-response"
+    static_configs:
+      - targets: ["incident-response:8004"]
+
+  - job_name: "bio-auth"
+    static_configs:
+      - targets: ["bio-auth:8005"]
+    metrics_path: /metrics
+
+  - job_name: "swarm-agent"
+    static_configs:
+      - targets: ["swarm-agent:8006"]
+
+  - job_name: "cognitive-firewall"
+    static_configs:
+      - targets: ["cognitive-firewall:8007"]
+    metrics_path: /metrics
+
+  - job_name: "api-gateway"
+    static_configs:
+      - targets: ["api-gateway:8080"]

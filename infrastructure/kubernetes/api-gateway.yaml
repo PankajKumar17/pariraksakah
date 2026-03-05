@@ -1,0 +1,102 @@
+# API Gateway — Deployment, Service (LoadBalancer), HPA, ConfigMap
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: cybershield
+  labels:
+    app: api-gateway
+    tier: application
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: application
+    spec:
+      serviceAccountName: api-gateway-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: api-gateway
+          image: ghcr.io/cybershield-x/api-gateway:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          envFrom:
+            - configMapRef:
+                name: api-gateway-config
+            - secretRef:
+                name: cybershield-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: cybershield
+spec:
+  type: LoadBalancer
+  selector:
+    app: api-gateway
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: cybershield
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  namespace: cybershield
+data:
+  API_GATEWAY_PORT: "8080"
+  THREAT_DETECTION_URL: "http://threat-detection:8001"
+  ACCESS_CONTROL_URL: "http://access-control:8002"
+  ANTI_PHISHING_URL: "http://anti-phishing:8003"
+  INCIDENT_RESPONSE_URL: "http://incident-response:8004"
+  BIO_AUTH_URL: "http://bio-auth:8005"
+  SWARM_AGENT_URL: "http://swarm-agent:8006"
+  COGNITIVE_FIREWALL_URL: "http://cognitive-firewall:8007"
+  SELF_HEALING_URL: "http://self-healing:8008"

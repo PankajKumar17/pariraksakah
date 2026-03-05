@@ -1,0 +1,108 @@
+# Least-privilege RBAC for CyberShield-X services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: threat-detection-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-control-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: anti-phishing-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: incident-response-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bio-auth-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: swarm-agent-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cognitive-firewall-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: self-healing-sa
+  namespace: cybershield
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-gateway-sa
+  namespace: cybershield
+
+---
+# Role for reading ConfigMaps and Secrets within the namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: service-reader
+  namespace: cybershield
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+
+---
+# Bind all service accounts to the reader role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: service-reader-binding
+  namespace: cybershield
+subjects:
+  - kind: ServiceAccount
+    name: threat-detection-sa
+  - kind: ServiceAccount
+    name: access-control-sa
+  - kind: ServiceAccount
+    name: anti-phishing-sa
+  - kind: ServiceAccount
+    name: incident-response-sa
+  - kind: ServiceAccount
+    name: bio-auth-sa
+  - kind: ServiceAccount
+    name: swarm-agent-sa
+  - kind: ServiceAccount
+    name: cognitive-firewall-sa
+  - kind: ServiceAccount
+    name: self-healing-sa
+  - kind: ServiceAccount
+    name: api-gateway-sa
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: service-reader

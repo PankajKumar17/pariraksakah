@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0F172A;
+  --bg-card: #1E293B;
+  --accent: #6C63FF;
+  --accent-glow: rgba(108, 99, 255, 0.25);
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --border: #334155;
+  --danger: #EF4444;
+  --warning: #F59E0B;
+  --success: #10B981;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Card component */
+.card {
+  @apply rounded-xl border border-gray-700/50 bg-[#1E293B] p-5 shadow-lg;
+}
+
+.card-header {
+  @apply text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3;
+}
+
+/* Metric pill */
+.metric-value {
+  @apply text-3xl font-bold tracking-tight;
+}
+
+.metric-label {
+  @apply text-xs text-gray-500 mt-1;
+}
+
+/* Severity badges */
+.badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-critical {
+  @apply bg-red-500/20 text-red-400;
+}
+
+.badge-high {
+  @apply bg-orange-500/20 text-orange-400;
+}
+
+.badge-medium {
+  @apply bg-yellow-500/20 text-yellow-400;
+}
+
+.badge-low {
+  @apply bg-blue-500/20 text-blue-400;
+}
+
+/* Accent glow effect */
+.glow {
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* Animation */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 10px var(--accent-glow); }
+  50% { box-shadow: 0 0 25px var(--accent-glow); }
+}
+.animate-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}

@@ -1,0 +1,17 @@
+[package]
+name = "cybershield-self-healing"
+version = "1.0.0"
+edition = "2021"
+description = "CyberShield-X Self-Healing Code DNA integrity monitor"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+ed25519-dalek = "2.1"
+libbpf-rs = "0.22"
+prometheus = "0.13"
+tracing = "0.1"
+tracing-subscriber = "0.3"

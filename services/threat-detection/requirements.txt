@@ -1,0 +1,20 @@
+# Threat Detection Service
+confluent-kafka==2.3.0
+fastavro==1.9.3
+fastapi==0.104.1
+uvicorn==0.24.0
+torch==2.1.1+cpu
+torch-geometric==2.4.0
+scikit-learn==1.4.0
+pandas==2.1.4
+numpy==1.26.2
+geoip2==4.7.0
+neo4j==5.15.0
+psycopg2-binary==2.9.9
+redis==5.0.1
+mlflow==2.8.1
+shap==0.43.0
+pydantic==2.5.2
+prometheus-client==0.19.0
+httpx==0.25.2
+python-dotenv==1.0.0

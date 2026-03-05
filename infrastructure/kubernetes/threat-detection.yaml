@@ -1,0 +1,109 @@
+# Threat Detection — Deployment, Service, HPA, ConfigMap
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: threat-detection
+  namespace: cybershield
+  labels:
+    app: threat-detection
+    tier: application
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: threat-detection
+  template:
+    metadata:
+      labels:
+        app: threat-detection
+        tier: application
+    spec:
+      serviceAccountName: threat-detection-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: threat-detection
+          image: ghcr.io/cybershield-x/threat-detection:latest
+          ports:
+            - containerPort: 8001
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          envFrom:
+            - configMapRef:
+                name: threat-detection-config
+            - secretRef:
+                name: cybershield-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: threat-detection
+  namespace: cybershield
+spec:
+  type: ClusterIP
+  selector:
+    app: threat-detection
+  ports:
+    - port: 8001
+      targetPort: 8001
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: threat-detection-hpa
+  namespace: cybershield
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: threat-detection
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: atde_inference_latency_seconds
+        target:
+          type: AverageValue
+          averageValue: "5m"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: threat-detection-config
+  namespace: cybershield
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  POSTGRES_HOST: "timescaledb"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "cybershield"
+  NEO4J_URI: "bolt://neo4j:7687"
+  ATDE_INFERENCE_PORT: "8001"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"

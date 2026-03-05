@@ -1,0 +1,71 @@
+# Neo4j StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j
+  namespace: cybershield
+  labels:
+    app: neo4j
+    tier: infrastructure
+spec:
+  serviceName: neo4j
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neo4j
+  template:
+    metadata:
+      labels:
+        app: neo4j
+        tier: infrastructure
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5-community
+          ports:
+            - containerPort: 7474
+              name: http
+            - containerPort: 7687
+              name: bolt
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: cybershield-secrets
+                  key: NEO4J_AUTH
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: neo4j-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+  namespace: cybershield
+spec:
+  type: ClusterIP
+  selector:
+    app: neo4j
+  ports:
+    - port: 7474
+      targetPort: 7474
+      name: http
+    - port: 7687
+      targetPort: 7687
+      name: bolt

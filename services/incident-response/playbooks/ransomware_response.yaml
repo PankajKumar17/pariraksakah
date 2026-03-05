@@ -1,0 +1,92 @@
+# CyberShield-X SOAR Playbook: Ransomware Response
+# Automated incident response for ransomware detection alerts
+
+name: ransomware_response
+description: >
+  Comprehensive ransomware incident response playbook.
+  Triggers on ransomware-type alerts, isolates affected hosts,
+  preserves forensic evidence, blocks C2 communication, and
+  notifies the SOC team.
+
+triggers:
+  - type: alert_type
+    conditions:
+      alert_type: ransomware
+  - type: severity
+    conditions:
+      severity: critical
+
+variables:
+  soc_channel: "#soc-critical"
+  forensic_bucket: "s3://cybershield-forensics"
+  containment_timeout: "30s"
+
+steps:
+  # Step 1: Immediate notification
+  - name: notify_soc_initial
+    action: notify
+    params:
+      channel: "#soc-critical"
+      message: "🚨 RANSOMWARE DETECTED on host {{.host}} — automated response initiated"
+
+  # Step 2: Parallel containment actions
+  - name: contain_threat
+    action: parallel
+    parallel:
+      - name: isolate_affected_host
+        action: isolate_host
+        params:
+          host: "{{.host}}"
+        timeout: "30s"
+        on_error: continue
+
+      - name: block_c2_ip
+        action: block_ip
+        params:
+          ip: "{{.source_ip}}"
+
+      - name: snapshot_host_state
+        action: snapshot_forensic
+        params:
+          host: "{{.host}}"
+
+  # Step 3: Enrich indicators
+  - name: enrich_file_hash
+    action: enrich_ioc
+    params:
+      ioc: "{{.file_hash}}"in
+
+  - name: enrich_c2_domain
+    action: enrich_ioc
+    params:
+      ioc: "{{.c2_domain}}"
+
+  # Step 4: Quarantine malicious files
+  - name: quarantine_ransomware_binary
+    action: quarantine_file
+    params:
+      path: "{{.malware_path}}"
+      host: "{{.host}}"
+
+  # Step 5: Run memory dump script
+  - name: collect_memory_dump
+    action: run_script
+    params:
+      script: "/opt/cybershield/scripts/memory_dump.sh"
+      args: "{{.host}}"
+    timeout: "120s"
+    on_error: continue
+
+  # Step 6: Final notification with summary
+  - name: notify_soc_summary
+    action: notify
+    params:
+      channel: "#soc-critical"
+      message: "✅ Ransomware response completed for {{.host}} — review forensic evidence"
+
+on_failure:
+  - name: escalate_to_oncall
+    action: notify
+    params:
+      channel: "#soc-escalation"
+      message: "⚠️ Ransomware playbook FAILED for host {{.host}} — manual intervention required"

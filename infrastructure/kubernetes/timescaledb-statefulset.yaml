@@ -1,0 +1,71 @@
+# TimescaleDB StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: timescaledb
+  namespace: cybershield
+  labels:
+    app: timescaledb
+    tier: infrastructure
+spec:
+  serviceName: timescaledb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timescaledb
+  template:
+    metadata:
+      labels:
+        app: timescaledb
+        tier: infrastructure
+    spec:
+      containers:
+        - name: timescaledb
+          image: timescale/timescaledb:latest-pg15
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          env:
+            - name: POSTGRES_DB
+              value: cybershield
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybershield-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybershield-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: timescaledb-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: timescaledb-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: timescaledb
+  namespace: cybershield
+spec:
+  type: ClusterIP
+  selector:
+    app: timescaledb
+  ports:
+    - port: 5432
+      targetPort: 5432

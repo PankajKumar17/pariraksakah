@@ -1,0 +1,9 @@
+[project]
+name = "cybershield-bio-auth"
+version = "1.0.0"
+description = "CyberShield-X Bio-Cyber Fusion Authentication"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

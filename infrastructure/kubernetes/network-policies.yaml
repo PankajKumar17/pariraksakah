@@ -1,0 +1,85 @@
+# Default deny-all network policy; explicit allow rules per service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: cybershield
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow API Gateway to receive external traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway-ingress
+  namespace: cybershield
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  ingress:
+    - from: []
+      ports:
+        - port: 8080
+          protocol: TCP
+  policyTypes:
+    - Ingress
+
+---
+# Allow API Gateway to reach all internal services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway-egress
+  namespace: cybershield
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  egress:
+    - to:
+        - podSelector: {}
+  policyTypes:
+    - Egress
+
+---
+# Allow all services to reach Kafka, Redis, TimescaleDB, Neo4j
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-infra-egress
+  namespace: cybershield
+spec:
+  podSelector:
+    matchLabels:
+      tier: application
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: infrastructure
+  policyTypes:
+    - Egress
+
+---
+# Allow DNS resolution for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: cybershield
+spec:
+  podSelector: {}
+  egress:
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes:
+    - Egress
