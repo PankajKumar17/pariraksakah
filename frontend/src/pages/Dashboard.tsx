@@ -27,37 +27,24 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: '#3B82F6',
 };
 
-// ── Fallback mock data ─────────────────────────
+// ── Fallback baseline data ─────────────────────
 
-function generateMockMetrics() {
+function generateDegradedMetrics() {
   return {
-    total_events_24h: 2_847_391,
-    active_threats: 47,
-    blocked_attacks: 1_293,
-    mean_detect_time_ms: 12,
-    alerts_by_severity: { critical: 8, high: 23, medium: 67, low: 142 },
+    total_events_24h: 0,
+    active_threats: 0,
+    blocked_attacks: 0,
+    mean_detect_time_ms: 0,
+    alerts_by_severity: { critical: 0, high: 0, medium: 0, low: 0 },
     top_attack_types: [
-      { name: 'Lateral Movement', count: 312 },
-      { name: 'C2 Beacon', count: 187 },
-      { name: 'Credential Theft', count: 156 },
-      { name: 'Ransomware', count: 89 },
-      { name: 'Data Exfiltration', count: 74 },
-      { name: 'Phishing', count: 201 },
+      { name: 'Lateral Movement', count: 0 },
+      { name: 'C2 Beacon', count: 0 },
+      { name: 'Credential Theft', count: 0 },
+      { name: 'Ransomware', count: 0 },
+      { name: 'Data Exfiltration', count: 0 },
+      { name: 'Phishing', count: 0 },
     ],
   };
-}
-
-function generateMockAlerts(): Alert[] {
-  return Array.from({ length: 30 }, (_, i) => ({
-    id: `alert-mock-${i}`,
-    severity: (['critical', 'high', 'high', 'medium', 'medium', 'low'] as const)[i % 6],
-    type: ['Lateral Movement', 'C2 Beacon', 'Credential Theft', 'Ransomware', 'Data Exfiltration', 'Phishing'][i % 6],
-    source_ip: `10.${(i * 17) % 255}.${(i * 31) % 255}.${(i * 7) % 255}`,
-    description: `Detected suspicious activity — matches known ${['APT29', 'APT28', 'Lazarus', 'FIN7'][i % 4]} TTPs`,
-    timestamp: new Date(Date.now() - i * 4 * 60_000).toISOString(),
-    mitre_technique: ['T1021', 'T1071', 'T1003', 'T1486', 'T1041', 'T1566'][i % 6],
-    status: 'open',
-  }));
 }
 
 function generateTimeSeriesData(baseEvents = 90000) {
@@ -92,6 +79,7 @@ export default function Dashboard() {
   const [isLive, setIsLive] = useState(false);
   const [services, setServices] = useState<any[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [degradedReason, setDegradedReason] = useState<string | null>(null);
 
   const fetchLiveData = useCallback(async () => {
     try {
@@ -99,6 +87,10 @@ export default function Dashboard() {
         fetch(`${API_BASE}/api/v1/dashboard`),
         fetch(`${API_BASE}/api/v1/alerts`),
       ]);
+
+      let dashboardOk = false;
+      let alertsLive = false;
+      let nextDegradedReason: string | null = null;
 
       if (dashRes.ok) {
         const data = await dashRes.json();
@@ -111,12 +103,24 @@ export default function Dashboard() {
           top_attack_types: data.top_attack_types,
         });
         setServices(data.services || []);
-        setIsLive(true);
+        dashboardOk = true;
         setLastUpdated(new Date());
       }
 
       if (alertsRes.ok) {
         const data = await alertsRes.json();
+        alertsLive = data.is_live === true;
+
+        if (!alertsLive) {
+          if (data.rollout_mode === 'synthetic') {
+            nextDegradedReason = 'Alerts are currently in synthetic rollback mode.';
+          } else if (data.degraded) {
+            nextDegradedReason = 'Live alert sources are temporarily unavailable.';
+          } else {
+            nextDegradedReason = 'Alert feed is not confirmed live yet.';
+          }
+        }
+
         const liveAlerts: Alert[] = (data.alerts || []).map((a: any) => ({
           id: a.id,
           severity: a.severity,
@@ -125,17 +129,27 @@ export default function Dashboard() {
           description: a.description,
           timestamp: a.timestamp,
           mitre_technique: a.mitre_technique,
+          campaign_id: a.campaign_id,
+          kill_chain_stage: a.kill_chain_stage,
+          campaign_risk_score: a.campaign_risk_score,
           status: a.status,
         }));
         setAlerts(liveAlerts);
+      } else {
+        nextDegradedReason = 'Alert API unavailable.';
       }
+
+      const live = dashboardOk && alertsLive;
+      setIsLive(live);
+      setDegradedReason(live ? null : (nextDegradedReason || 'Partial backend availability; showing degraded data.'));
     } catch {
-      // Backend unreachable — use mock data
+      // Backend unreachable — explicit degraded baseline, no synthetic alerts
       if (!metrics) {
-        setMetrics(generateMockMetrics());
-        setAlerts(generateMockAlerts());
+        setMetrics(generateDegradedMetrics());
+        setAlerts([]);
       }
       setIsLive(false);
+      setDegradedReason('Backend unavailable. Showing degraded baseline with no synthetic alerts.');
     }
   }, []);
 
@@ -198,12 +212,18 @@ export default function Dashboard() {
                 : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40'
             }`}
           >
-            {isLive ? '● LIVE' : '○ DEMO'}
+            {isLive ? '● LIVE' : '○ DEGRADED'}
           </span>
         </div>
       </div>
 
       {/* KPI Row */}
+      {degradedReason && (
+        <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
+          {degradedReason}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <KPICard
           label="Events (24h)"

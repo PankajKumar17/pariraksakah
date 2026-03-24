@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -50,6 +51,11 @@ func env(key, fallback string) string {
 }
 
 var jwtSecret = []byte(env("JWT_SECRET", "cybershield-x-dev-secret-change-in-prod"))
+var alertsMode = strings.ToLower(env("ALERTS_MODE", "live"))
+var deployEnv = strings.ToLower(env("DEPLOY_ENV", "development"))
+var rolloutAdminToken = env("ROLLOUT_ADMIN_TOKEN", "")
+var allowSyntheticFallback = strings.ToLower(env("ALLOW_SYNTHETIC_FALLBACK", "false")) == "true"
+var alertsModeMu sync.RWMutex
 
 // ── Prometheus Metrics ─────────────────────────
 
@@ -81,10 +87,115 @@ var (
 			Help: "Total rate limit rejections",
 		},
 	)
+	alertFeedSourceTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gateway_alert_feed_source_total",
+			Help: "Total alert feed responses by source mode",
+		},
+		[]string{"source"},
+	)
+	alertsRolloutChangesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gateway_alerts_rollout_changes_total",
+			Help: "Total rollout mode change attempts",
+		},
+		[]string{"from", "to", "result"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(httpRequestsTotal, httpRequestDuration, activeConnections, rateLimitHits)
+	prometheus.MustRegister(
+		httpRequestsTotal,
+		httpRequestDuration,
+		activeConnections,
+		rateLimitHits,
+		alertFeedSourceTotal,
+		alertsRolloutChangesTotal,
+	)
+}
+
+func currentAlertsMode() string {
+	alertsModeMu.RLock()
+	defer alertsModeMu.RUnlock()
+	return alertsMode
+}
+
+func setAlertsMode(mode string) {
+	alertsModeMu.Lock()
+	defer alertsModeMu.Unlock()
+	alertsMode = mode
+}
+
+func isProtectedEnv() bool {
+	return deployEnv == "staging" || deployEnv == "production" || deployEnv == "prod"
+}
+
+func bootstrapRolloutMode() {
+	mode := strings.ToLower(strings.TrimSpace(alertsMode))
+	if mode != "synthetic" && mode != "live" {
+		mode = "live"
+	}
+
+	if isProtectedEnv() && mode == "synthetic" && !allowSyntheticFallback {
+		log.Printf("[ROLLOUT] synthetic mode disabled in %s without ALLOW_SYNTHETIC_FALLBACK=true, forcing live", deployEnv)
+		mode = "live"
+	}
+
+	setAlertsMode(mode)
+	log.Printf("[ROLLOUT] initialized alerts mode=%s deploy_env=%s synthetic_fallback=%v", mode, deployEnv, allowSyntheticFallback)
+}
+
+type rolloutModeUpdateRequest struct {
+	Mode   string `json:"mode"`
+	Reason string `json:"reason"`
+	Force  bool   `json:"force"`
+}
+
+func getAlertsRolloutStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"alerts_mode":                currentAlertsMode(),
+		"deploy_env":                 deployEnv,
+		"synthetic_fallback_allowed": allowSyntheticFallback,
+	})
+}
+
+func updateAlertsRolloutMode(w http.ResponseWriter, r *http.Request) {
+	if rolloutAdminToken != "" && r.Header.Get("X-Rollout-Token") != rolloutAdminToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid rollout token"})
+		return
+	}
+
+	var req rolloutModeUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
+		return
+	}
+
+	newMode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if newMode != "live" && newMode != "synthetic" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mode must be live or synthetic"})
+		return
+	}
+
+	prev := currentAlertsMode()
+	if newMode == "synthetic" && isProtectedEnv() && !allowSyntheticFallback && !req.Force {
+		alertsRolloutChangesTotal.WithLabelValues(prev, newMode, "rejected").Inc()
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "synthetic mode blocked in protected env; set ALLOW_SYNTHETIC_FALLBACK=true or send force=true",
+		})
+		return
+	}
+
+	setAlertsMode(newMode)
+	alertsRolloutChangesTotal.WithLabelValues(prev, newMode, "applied").Inc()
+	log.Printf("[ROLLOUT] alerts mode changed %s -> %s reason=%s", prev, newMode, req.Reason)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":      "ok",
+		"alerts_mode": newMode,
+		"previous":    prev,
+		"deploy_env":  deployEnv,
+	})
 }
 
 // ── Rate Limiter ───────────────────────────────
@@ -312,13 +423,63 @@ func proxyToExact(exactURL string) http.HandlerFunc {
 // ── WebSocket Proxy ────────────────────────────
 
 func wsProxyHandler(w http.ResponseWriter, r *http.Request) {
-	// For production: use gorilla/websocket to proxy WebSocket connections
-	// to the threat-detection service's event stream
-	targetURL := services["threat-detection"].URL
-	target, _ := url.Parse(targetURL)
+	upstreamBase := strings.TrimRight(services["threat-detection"].URL, "/")
+	upstreamURL := strings.Replace(upstreamBase, "http://", "ws://", 1) + "/ws/events"
 
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.ServeHTTP(w, r)
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	clientConn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[WS] client upgrade failed: %v", err)
+		return
+	}
+
+	headers := http.Header{}
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		headers.Set("Authorization", auth)
+	}
+	upstreamConn, _, err := websocket.DefaultDialer.Dial(upstreamURL, headers)
+	if err != nil {
+		log.Printf("[WS] upstream dial failed (%s): %v", upstreamURL, err)
+		_ = clientConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "upstream unavailable"))
+		_ = clientConn.Close()
+		return
+	}
+
+	errCh := make(chan error, 2)
+
+	go func() {
+		for {
+			msgType, msg, err := clientConn.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if err := upstreamConn.WriteMessage(msgType, msg); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			msgType, msg, err := upstreamConn.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if err := clientConn.WriteMessage(msgType, msg); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+
+	<-errCh
+	_ = upstreamConn.Close()
+	_ = clientConn.Close()
 }
 
 // ── Helpers ────────────────────────────────────
@@ -334,6 +495,7 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 func main() {
 	port := env("PORT", "8000")
 	rateLimiter := NewRateLimiter(100, time.Minute) // 100 req/min per IP
+	bootstrapRolloutMode()
 
 	r := chi.NewRouter()
 
@@ -367,15 +529,17 @@ func main() {
 	// ── Public Dashboard Data (no JWT required) ──
 	r.Get("/api/v1/dashboard", liveDashboardHandler)
 	r.Get("/api/v1/alerts", liveAlertsHandler)
+	r.Get("/api/v1/rollout/alerts", getAlertsRolloutStatus)
+	r.Post("/api/v1/admin/rollout/alerts", updateAlertsRolloutMode)
 
 	// ── Public Auth (login to get JWT) ──
-	r.Post("/api/v1/auth/login",  proxyToExact(services["access-control"].URL+"/auth/login"))
+	r.Post("/api/v1/auth/login", proxyToExact(services["access-control"].URL+"/auth/login"))
 	r.Post("/api/v1/auth/verify", proxyToExact(services["access-control"].URL+"/auth/verify"))
 
 	// ── Public scan endpoints (no auth required) ──
-	r.Post("/api/v1/phishing/check/url",   proxyToExact(services["anti-phishing"].URL+"/analyze/url"))
+	r.Post("/api/v1/phishing/check/url", proxyToExact(services["anti-phishing"].URL+"/analyze/url"))
 	r.Post("/api/v1/phishing/check/email", proxyToExact(services["anti-phishing"].URL+"/analyze/email"))
-	r.Get("/api/v1/threats/recent",        proxyToExact(services["threat-detection"].URL+"/threats/recent"))
+	r.Get("/api/v1/threats/recent", proxyToExact(services["threat-detection"].URL+"/threats/recent"))
 
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
 		// Check upstream health
@@ -545,6 +709,128 @@ func intFromMap(m map[string]interface{}, key string) int64 {
 	return 0
 }
 
+func floatFromMap(m map[string]interface{}, key string) float64 {
+	if m == nil {
+		return 0
+	}
+	v, ok := m[key]
+	if !ok {
+		return 0
+	}
+	switch x := v.(type) {
+	case float64:
+		return x
+	case float32:
+		return float64(x)
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	}
+	return 0
+}
+
+func stringFromMap(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func confidenceFromSeverity(severity string) float64 {
+	switch strings.ToLower(severity) {
+	case "critical":
+		return 0.95
+	case "high":
+		return 0.85
+	case "medium":
+		return 0.70
+	default:
+		return 0.55
+	}
+}
+
+func techniqueLabel(primary string) string {
+	switch primary {
+	case "port_scan":
+		return "Port Scan"
+	case "lateral_movement":
+		return "Lateral Movement"
+	case "c2_beacon":
+		return "C2 Beacon"
+	case "credential_access":
+		return "Credential Access"
+	case "data_exfiltration":
+		return "Data Exfiltration"
+	case "brute_force":
+		return "Brute Force"
+	case "privilege_escalation":
+		return "Privilege Escalation"
+	default:
+		return "Suspicious Activity"
+	}
+}
+
+func fetchJSONMap(client *http.Client, endpoint string) (map[string]interface{}, error) {
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+	var out map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func syntheticAlertsPayload() map[string]interface{} {
+	now := time.Now()
+	alertTypes := []string{"Lateral Movement", "C2 Beacon", "Credential Theft", "Ransomware", "Data Exfiltration", "Phishing", "SQL Injection", "Port Scan"}
+	alertSeverities := []string{"critical", "high", "high", "medium", "medium", "medium", "low", "low"}
+	mitreIDs := []string{"T1021", "T1071", "T1003", "T1486", "T1041", "T1566", "T1190", "T1046"}
+	aptGroups := []string{"APT29", "APT28", "Lazarus", "FIN7", "Carbanak", "Cozy Bear", "Fancy Bear", "UNC2452"}
+
+	alerts := make([]map[string]interface{}, 0, 30)
+	for i := 0; i < 30; i++ {
+		idx := i % len(alertTypes)
+		ts := now.Add(-time.Duration(i*4)*time.Minute - time.Duration(i*13)*time.Second)
+		alerts = append(alerts, map[string]interface{}{
+			"id":              fmt.Sprintf("alert-%d-%d", now.Unix(), i),
+			"severity":        alertSeverities[idx],
+			"type":            alertTypes[idx],
+			"source_ip":       fmt.Sprintf("10.%d.%d.%d", 192+i%10, i*17%255, i*31%255),
+			"destination_ip":  fmt.Sprintf("172.16.%d.%d", i%50, i*7%255),
+			"description":     fmt.Sprintf("Detected %s pattern — matches known %s TTPs", alertTypes[idx], aptGroups[idx%len(aptGroups)]),
+			"timestamp":       ts.UTC().Format(time.RFC3339),
+			"mitre_technique": mitreIDs[idx],
+			"status":          "open",
+			"confidence":      0.85 + float64(i%15)*0.01,
+			"source":          "synthetic",
+		})
+	}
+
+	return map[string]interface{}{
+		"alerts":       alerts,
+		"total":        len(alerts),
+		"is_live":      false,
+		"degraded":     true,
+		"rollout_mode": "synthetic",
+		"generated_at": now.UTC().Format(time.RFC3339),
+	}
+}
+
 func liveDashboardHandler(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 2 * time.Second}
 
@@ -612,45 +898,47 @@ func liveDashboardHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pull REAL counters from service stats
-	threatStats    := allStats["threat-detection"]
-	phishingStats  := allStats["anti-phishing"]
-	cfStats        := allStats["cognitive-firewall"]
-	incidentStats  := allStats["incident-response"]
+	threatStats := allStats["threat-detection"]
+	phishingStats := allStats["anti-phishing"]
+	cfStats := allStats["cognitive-firewall"]
+	incidentStats := allStats["incident-response"]
 
-	totalEvents     := intFromMap(threatStats, "events_processed")
+	totalEvents := intFromMap(threatStats, "events_processed")
 	threatsDetected := intFromMap(threatStats, "threats_detected")
-	emailsAnalyzed  := intFromMap(phishingStats, "emails_analyzed")
+	emailsAnalyzed := intFromMap(phishingStats, "emails_analyzed")
 	phishingBlocked := intFromMap(phishingStats, "phishing_blocked")
-	urlsAnalyzed    := intFromMap(phishingStats, "urls_analyzed")
-	rulesActive     := intFromMap(cfStats, "rules_active")
-	ipsBlocked      := intFromMap(cfStats, "ips_blocked")
-	totalIncidents  := intFromMap(incidentStats, "total_incidents")
-	autoContained   := intFromMap(incidentStats, "auto_contained")
+	urlsAnalyzed := intFromMap(phishingStats, "urls_analyzed")
+	rulesActive := intFromMap(cfStats, "rules_active")
+	ipsBlocked := intFromMap(cfStats, "ips_blocked")
+	totalIncidents := intFromMap(incidentStats, "total_incidents")
+	autoContained := intFromMap(incidentStats, "auto_contained")
 
 	// Combine into single blocked count
 	totalBlocked := phishingBlocked + ipsBlocked + autoContained
 
 	// Build severity distribution from real threat data
 	criticalCount := int(threatsDetected / 8)
-	highCount     := int(threatsDetected / 4)
-	mediumCount   := int(threatsDetected / 2)
-	lowCount      := int(threatsDetected - int64(criticalCount+highCount+mediumCount))
-	if lowCount < 0 { lowCount = 0 }
+	highCount := int(threatsDetected / 4)
+	mediumCount := int(threatsDetected / 2)
+	lowCount := int(threatsDetected - int64(criticalCount+highCount+mediumCount))
+	if lowCount < 0 {
+		lowCount = 0
+	}
 
 	// Uptime as fallback for zero-traffic scenario label
 	uptime := time.Since(gatewayStartTime).Seconds()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		// Real counts from services
-		"total_events_24h":      totalEvents,
-		"active_threats":        threatsDetected,
-		"blocked_attacks":       totalBlocked,
-		"mean_detect_time_ms":   12,
-		"healthy_services":      healthyCount,
-		"total_services":        len(svcNames),
-		"uptime_seconds":        int64(uptime),
-		"gateway_started_at":    gatewayStartTime.UTC().Format(time.RFC3339),
-		"services":              healthResults,
+		"total_events_24h":    totalEvents,
+		"active_threats":      threatsDetected,
+		"blocked_attacks":     totalBlocked,
+		"mean_detect_time_ms": 12,
+		"healthy_services":    healthyCount,
+		"total_services":      len(svcNames),
+		"uptime_seconds":      int64(uptime),
+		"gateway_started_at":  gatewayStartTime.UTC().Format(time.RFC3339),
+		"services":            healthResults,
 		"alerts_by_severity": map[string]int{
 			"critical": criticalCount,
 			"high":     highCount,
@@ -659,53 +947,142 @@ func liveDashboardHandler(w http.ResponseWriter, r *http.Request) {
 		},
 		// Extended real stats
 		"extended": map[string]interface{}{
-			"emails_analyzed":  emailsAnalyzed,
-			"urls_scanned":     urlsAnalyzed,
-			"phishing_blocked": phishingBlocked,
-			"firewall_rules":   rulesActive,
-			"ips_blocked":      ipsBlocked,
-			"incidents_total":  totalIncidents,
+			"emails_analyzed":          emailsAnalyzed,
+			"urls_scanned":             urlsAnalyzed,
+			"phishing_blocked":         phishingBlocked,
+			"firewall_rules":           rulesActive,
+			"ips_blocked":              ipsBlocked,
+			"incidents_total":          totalIncidents,
 			"incidents_auto_contained": autoContained,
 		},
 		// Attack type breakdown — real if data available, else zero
 		"top_attack_types": []map[string]interface{}{
-			{"name": "Lateral Movement",  "count": int(threatsDetected * 35 / 100)},
-			{"name": "C2 Beacon",         "count": int(threatsDetected * 21 / 100)},
-			{"name": "Credential Theft",  "count": int(threatsDetected * 18 / 100)},
-			{"name": "Ransomware",        "count": int(threatsDetected * 10 / 100)},
-			{"name": "Data Exfiltration", "count": int(threatsDetected * 8  / 100)},
-			{"name": "Phishing",          "count": int(phishingBlocked)},
+			{"name": "Lateral Movement", "count": int(threatsDetected * 35 / 100)},
+			{"name": "C2 Beacon", "count": int(threatsDetected * 21 / 100)},
+			{"name": "Credential Theft", "count": int(threatsDetected * 18 / 100)},
+			{"name": "Ransomware", "count": int(threatsDetected * 10 / 100)},
+			{"name": "Data Exfiltration", "count": int(threatsDetected * 8 / 100)},
+			{"name": "Phishing", "count": int(phishingBlocked)},
 		},
 	})
 }
 
-// ── Live Alerts Handler ────────────────────────
-
-var alertTypes = []string{"Lateral Movement", "C2 Beacon", "Credential Theft", "Ransomware", "Data Exfiltration", "Phishing", "SQL Injection", "Port Scan"}
-var alertSeverities = []string{"critical", "high", "high", "medium", "medium", "medium", "low", "low"}
-var mitreIDs = []string{"T1021", "T1071", "T1003", "T1486", "T1041", "T1566", "T1190", "T1046"}
-var aptGroups = []string{"APT29", "APT28", "Lazarus", "FIN7", "Carbanak", "Cozy Bear", "Fancy Bear", "UNC2452"}
-
 func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-	alerts := make([]map[string]interface{}, 0, 30)
-	for i := 0; i < 30; i++ {
-		idx := i % len(alertTypes)
-		ts := now.Add(-time.Duration(i*4)*time.Minute - time.Duration(i*13)*time.Second)
-		alerts = append(alerts, map[string]interface{}{
-			"id":              fmt.Sprintf("alert-%d-%d", now.Unix(), i),
-			"severity":        alertSeverities[idx],
-			"type":            alertTypes[idx],
-			"source_ip":       fmt.Sprintf("10.%d.%d.%d", 192+i%10, i*17%255, i*31%255),
-			"destination_ip":  fmt.Sprintf("172.16.%d.%d", i%50, i*7%255),
-			"description":     fmt.Sprintf("Detected %s pattern — matches known %s TTPs", alertTypes[idx], aptGroups[idx%len(aptGroups)]),
-			"timestamp":       ts.UTC().Format(time.RFC3339),
-			"mitre_technique": mitreIDs[idx],
-			"status":          "open",
-			"confidence":      0.85 + float64(i%15)*0.01,
-		})
+	mode := currentAlertsMode()
+	if mode == "synthetic" {
+		alertFeedSourceTotal.WithLabelValues("synthetic").Inc()
+		writeJSON(w, http.StatusOK, syntheticAlertsPayload())
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"alerts": alerts, "total": 30})
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	alerts := make([]map[string]interface{}, 0, 100)
+	threatLive := false
+	incidentLive := false
+
+	// Pull live threats from threat-detection.
+	if payload, err := fetchJSONMap(client, services["threat-detection"].URL+"/threats/recent?limit=50"); err == nil {
+		if raw, ok := payload["threats"].([]interface{}); ok {
+			for _, item := range raw {
+				th, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				severity := strings.ToLower(stringFromMap(th, "severity"))
+				if severity == "" {
+					severity = "medium"
+				}
+
+				primary := stringFromMap(th, "primary_technique")
+				label := techniqueLabel(primary)
+				detectedAt := stringFromMap(th, "detected_at")
+				if detectedAt == "" {
+					detectedAt = time.Now().UTC().Format(time.RFC3339)
+				}
+
+				desc := fmt.Sprintf("Detected %s pattern", label)
+				if mitre := stringFromMap(th, "mitre_technique_id"); mitre != "" {
+					desc = fmt.Sprintf("Detected %s pattern (%s)", label, mitre)
+				}
+
+				alerts = append(alerts, map[string]interface{}{
+					"id":                  "threat-" + stringFromMap(th, "id"),
+					"severity":            severity,
+					"type":                label,
+					"source_ip":           stringFromMap(th, "src_ip"),
+					"destination_ip":      stringFromMap(th, "dst_ip"),
+					"description":         desc,
+					"timestamp":           detectedAt,
+					"mitre_technique":     stringFromMap(th, "mitre_technique_id"),
+					"campaign_id":         stringFromMap(th, "campaign_id"),
+					"kill_chain_stage":    stringFromMap(th, "kill_chain_stage"),
+					"campaign_risk_score": floatFromMap(th, "campaign_risk_score"),
+					"status":              "open",
+					"confidence":          floatFromMap(th, "score"),
+					"source":              "threat-detection",
+				})
+			}
+			threatLive = true
+		}
+	}
+
+	// Pull live incidents from incident-response.
+	if payload, err := fetchJSONMap(client, services["incident-response"].URL+"/incidents"); err == nil {
+		if raw, ok := payload["incidents"].([]interface{}); ok {
+			for _, item := range raw {
+				inc, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				severity := strings.ToLower(stringFromMap(inc, "severity"))
+				if severity == "" {
+					severity = "medium"
+				}
+
+				timestamp := stringFromMap(inc, "created_at")
+				if timestamp == "" {
+					timestamp = time.Now().UTC().Format(time.RFC3339)
+				}
+
+				desc := stringFromMap(inc, "description")
+				if desc == "" {
+					desc = fmt.Sprintf("Incident %s reported", stringFromMap(inc, "id"))
+				}
+
+				alerts = append(alerts, map[string]interface{}{
+					"id":              "incident-" + stringFromMap(inc, "id"),
+					"severity":        severity,
+					"type":            stringFromMap(inc, "alert_type"),
+					"source_ip":       stringFromMap(inc, "source_ip"),
+					"destination_ip":  stringFromMap(inc, "host"),
+					"description":     desc,
+					"timestamp":       timestamp,
+					"mitre_technique": "",
+					"status":          stringFromMap(inc, "status"),
+					"confidence":      confidenceFromSeverity(severity),
+					"source":          "incident-response",
+				})
+			}
+			incidentLive = true
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"alerts":       alerts,
+		"total":        len(alerts),
+		"is_live":      threatLive || incidentLive,
+		"degraded":     !threatLive && !incidentLive,
+		"rollout_mode": mode,
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+
+	if threatLive || incidentLive {
+		alertFeedSourceTotal.WithLabelValues("live").Inc()
+	} else {
+		alertFeedSourceTotal.WithLabelValues("degraded").Inc()
+	}
 }
 
 // ── Aggregated Innovations Status ──────────────

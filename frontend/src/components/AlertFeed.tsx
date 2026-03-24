@@ -39,12 +39,23 @@ export default function AlertFeed({ alerts }: AlertFeedProps) {
                   {alert.mitre_technique}
                 </span>
               )}
+              {alert.kill_chain_stage && (
+                <span className="text-xs text-cyan-300 bg-cyan-500/10 px-1.5 py-0.5 rounded">
+                  {alert.kill_chain_stage}
+                </span>
+              )}
             </div>
             <p className="text-xs text-gray-400 truncate mt-0.5">
               {alert.description}
             </p>
             <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
               <span className="font-mono">{alert.source_ip}</span>
+              {alert.campaign_id && (
+                <span className="text-cyan-400/80">{alert.campaign_id.slice(0, 8)}</span>
+              )}
+              {typeof alert.campaign_risk_score === 'number' && (
+                <span>risk {Math.round(alert.campaign_risk_score * 100)}%</span>
+              )}
               <span>
                 {new Date(alert.timestamp).toLocaleTimeString([], {
                   hour: '2-digit',
