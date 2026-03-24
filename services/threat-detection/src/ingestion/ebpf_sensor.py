@@ -13,6 +13,7 @@ import ctypes as ct
 import json
 import logging
 import os
+import platform
 import signal
 import sys
 import time
@@ -178,7 +179,12 @@ class EBPFSensor:
         hostname: Optional[str] = None,
     ) -> None:
         self._producer = kafka_producer
-        self._hostname = hostname or os.uname().nodename
+        if hostname:
+            self._hostname = hostname
+        elif hasattr(os, "uname"):
+            self._hostname = os.uname().nodename
+        else:
+            self._hostname = platform.node()
         self._running = False
         self._bpf_objects: list[Any] = []
 

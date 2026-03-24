@@ -83,6 +83,39 @@ cybershield-x/
 
 See individual service READMEs for setup instructions.
 
+### Dev Baseline (Windows/Linux)
+
+- Python: `3.11+` (project currently tested on newer versions as well)
+- Node.js: `20 LTS` (or newer compatible runtime)
+- Go: `1.21+`
+- Rust: stable toolchain via `rustup` (`cargo` required for `services/self-healing` builds)
+
+### One-Command Local Bootstrap
+
+Run this once from repository root:
+
+```bash
+python scripts/bootstrap_dev.py
+```
+
+This installs test-only Python dependencies from `requirements-test.txt`, installs frontend dependencies when `npm` is available, and checks whether `cargo` is installed.
+
+### Rust Toolchain Setup
+
+- Windows (PowerShell):
+
+```powershell
+winget install Rustlang.Rustup
+rustup default stable
+```
+
+- Linux/macOS:
+
+```bash
+curl https://sh.rustup.rs -sSf | sh -s -- -y
+rustup default stable
+```
+
 ## License
 
 Proprietary — All rights reserved.

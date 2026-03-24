@@ -43,6 +43,40 @@ What is left:
 - Event streaming pipeline from Kafka/Flink into detection outcomes is not fully represented in dashboard UX as an end-to-end live feed.
 - Production-grade alert correlation/suppression tuning and persistent detection history are still limited (mostly in-memory behavior in core services).
 
+Steps
+
+Phase 1: Live Alert Feed First (MVP)
+Replace synthetic gateway alert generation with live upstream data while keeping the current response shape stable for frontend compatibility.
+Add explicit live/degraded metadata in alert payloads so the UI never silently shows synthetic-style data.
+Add a gateway feature flag to switch between old/new handler during rollout.
+Phase 2: Persistence and State Reliability (depends on Phase 1)
+Persist detections/alerts in TimescaleDB so container restarts do not wipe operational history.
+Apply retention + index strategy for fast recent alerts and historical lookups.
+Bound or persist current in-memory state to remove growth/restart risks.
+Phase 3: End-to-End Streaming Visibility (parallel with late Phase 2)
+Add Kafka consumer-driven detection flow so dashboard updates reflect stream events, not only direct API submissions.
+Wire WebSocket + REST fallback to one canonical alert source so timeline and list stay consistent.
+Phase 4: Correlation and Suppression Quality (depends on Phases 2 and 3)
+Integrate deduplication/suppression into the main processing path (not utility-only side code).
+Add campaign/kill-chain correlation metadata to alerts for grouped investigation.
+Add analyst feedback loop for false-positive suppression tuning.
+Phase 5: Rollout Safety and Monitoring (parallel with Phase 4)
+Add metrics for ingestion lag, alert latency, dedup hit rate, suppression rate, and persistence failures.
+Run staged rollout: synthetic off in staging, then production with rollback toggle.
+What We Can Cover Under Point A
+
+Remove synthetic alert feed behavior.
+Make dashboard truly reflect live detections.
+Add persistent detection history.
+Connect stream ingestion to dashboard UX.
+Improve alert quality with dedup/suppression/correlation.
+Add operational SLOs and safe rollout controls.
+
+
+
+
+
+
 ### B. Secure access & advanced encryption frameworks
 
 What is made:
