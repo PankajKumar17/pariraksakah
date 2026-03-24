@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -13,6 +16,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -707,6 +712,7 @@ func main() {
 	// ── Public Dashboard Data (no JWT required) ──
 	r.Get("/api/v1/dashboard", liveDashboardHandler)
 	r.Get("/api/v1/alerts", liveAlertsHandler)
+	r.Get("/api/v1/infra/pods/ttl", infraPodsTTLHandler)
 
 	// ── Public Auth (login to get JWT) ──
 	r.Post("/api/v1/auth/login", proxyToExact(services["access-control"].URL+"/auth/login"))
@@ -1049,6 +1055,178 @@ func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"alerts": alerts, "total": 30})
+}
+
+// ── Ephemeral Pod TTL Handler ─────────────────
+
+type k8sPodList struct {
+	Items []struct {
+		Metadata struct {
+			Name              string            `json:"name"`
+			Namespace         string            `json:"namespace"`
+			CreationTimestamp time.Time         `json:"creationTimestamp"`
+			Labels            map[string]string `json:"labels"`
+		} `json:"metadata"`
+		Status struct {
+			Phase string `json:"phase"`
+		} `json:"status"`
+	} `json:"items"`
+}
+
+func infraPodsTTLHandler(w http.ResponseWriter, r *http.Request) {
+	namespace := env("K8S_NAMESPACE", env("POD_NAMESPACE", "cybershield"))
+	ttlSec := 3600
+	if raw := env("EPHEMERAL_POD_TTL_SEC", "3600"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			ttlSec = parsed
+		}
+	}
+
+	pods, source, err := fetchKubernetesPodTTLs(r.Context(), namespace, ttlSec)
+	if err != nil || len(pods) == 0 {
+		pods = fallbackPodTTLs(ttlSec)
+		source = "fallback"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"source":          source,
+		"namespace":       namespace,
+		"ttl_sec_default": ttlSec,
+		"generated_at":    time.Now().UTC().Format(time.RFC3339),
+		"pods":            pods,
+	})
+}
+
+func fetchKubernetesPodTTLs(ctx context.Context, namespace string, ttlSec int) ([]map[string]interface{}, string, error) {
+	token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return nil, "", err
+	}
+	caPEM, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+	if err != nil {
+		return nil, "", err
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, "", fmt.Errorf("failed to load Kubernetes CA")
+	}
+
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		},
+	}
+
+	apiURL := fmt.Sprintf("https://kubernetes.default.svc/api/v1/namespaces/%s/pods", namespace)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, "", fmt.Errorf("k8s api status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var list k8sPodList
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, "", err
+	}
+
+	now := time.Now().UTC()
+	ephemeral := make([]map[string]interface{}, 0, len(list.Items))
+	allPods := make([]map[string]interface{}, 0, len(list.Items))
+
+	for _, p := range list.Items {
+		if p.Metadata.Name == "" {
+			continue
+		}
+		ageSec := int(now.Sub(p.Metadata.CreationTimestamp).Seconds())
+		if ageSec < 0 {
+			ageSec = 0
+		}
+		remaining := ttlSec - ageSec
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		labels := p.Metadata.Labels
+		isEphemeral := strings.Contains(strings.ToLower(p.Metadata.Name), "ephem") ||
+			strings.EqualFold(labels["ephemeral"], "true") ||
+			labels["job-name"] != ""
+
+		entry := map[string]interface{}{
+			"name":          p.Metadata.Name,
+			"namespace":     p.Metadata.Namespace,
+			"phase":         p.Status.Phase,
+			"age_sec":       ageSec,
+			"ttl_sec":       ttlSec,
+			"remaining_sec": remaining,
+			"ephemeral":     isEphemeral,
+		}
+
+		allPods = append(allPods, entry)
+		if isEphemeral {
+			ephemeral = append(ephemeral, entry)
+		}
+	}
+
+	result := ephemeral
+	if len(result) == 0 {
+		result = allPods
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i]["remaining_sec"].(int) < result[j]["remaining_sec"].(int)
+	})
+
+	if len(result) > 12 {
+		result = result[:12]
+	}
+
+	return result, "kubernetes", nil
+}
+
+func fallbackPodTTLs(ttlSec int) []map[string]interface{} {
+	ageSec := int(time.Since(gatewayStartTime).Seconds())
+	if ageSec < 0 {
+		ageSec = 0
+	}
+	remaining := ttlSec - ageSec
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	pods := make([]map[string]interface{}, 0, len(services))
+	for name := range services {
+		pods = append(pods, map[string]interface{}{
+			"name":          fmt.Sprintf("%s-ephem-local", name),
+			"namespace":     env("POD_NAMESPACE", "cybershield"),
+			"phase":         "Running",
+			"age_sec":       ageSec,
+			"ttl_sec":       ttlSec,
+			"remaining_sec": remaining,
+			"ephemeral":     true,
+		})
+	}
+
+	sort.Slice(pods, func(i, j int) bool {
+		return pods[i]["name"].(string) < pods[j]["name"].(string)
+	})
+
+	if len(pods) > 8 {
+		pods = pods[:8]
+	}
+	return pods
 }
 
 // ── Aggregated Innovations Status ──────────────

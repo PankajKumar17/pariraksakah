@@ -27,6 +27,32 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: '#3B82F6',
 };
 
+const MITRE_MATRIX: Array<{ tactic: string; techniques: string[] }> = [
+  { tactic: 'Initial Access', techniques: ['T1566', 'T1190', 'T1078'] },
+  { tactic: 'Execution', techniques: ['T1059', 'T1204', 'T1053'] },
+  { tactic: 'Persistence', techniques: ['T1547', 'T1098', 'T1136'] },
+  { tactic: 'Credential Access', techniques: ['T1003', 'T1110', 'T1555'] },
+  { tactic: 'Lateral Movement', techniques: ['T1021', 'T1570', 'T1210'] },
+  { tactic: 'Command & Control', techniques: ['T1071', 'T1095', 'T1105'] },
+  { tactic: 'Exfiltration', techniques: ['T1041', 'T1567', 'T1020'] },
+  { tactic: 'Impact', techniques: ['T1486', 'T1499', 'T1531'] },
+];
+
+type BioTrust = {
+  score: number;
+  confidence: number;
+  driftRisk: number;
+  lastCheck: string;
+};
+
+type PodTTL = {
+  name: string;
+  namespace: string;
+  ageSec: number;
+  ttlSec: number;
+  fetchedAtEpochSec: number;
+};
+
 // ── Fallback mock data ─────────────────────────
 
 function generateMockMetrics() {
@@ -92,10 +118,13 @@ export default function Dashboard() {
   const [isLive, setIsLive] = useState(false);
   const [services, setServices] = useState<any[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [nowMs, setNowMs] = useState(Date.now());
 
   // ── Anti-phishing extended stats ─────────────────
   const [phishingStats, setPhishingStats] = useState<any>(null);
   const [modelStatus, setModelStatus] = useState<any>(null);
+  const [bioTrust, setBioTrust] = useState<BioTrust | null>(null);
+  const [podTtls, setPodTtls] = useState<PodTTL[]>([]);
 
   const fetchPhishingStats = useCallback(async () => {
     try {
@@ -126,6 +155,60 @@ export default function Dashboard() {
         status: 'active',
       });
     }
+  }, []);
+
+  const fetchBioTrust = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/bio-auth/stats`);
+      if (res.ok) {
+        const data = await res.json();
+        setBioTrust({
+          score: Number(data.trust_score ?? data.score ?? 86),
+          confidence: Number(data.confidence ?? 92),
+          driftRisk: Number(data.drift_risk ?? 14),
+          lastCheck: data.last_check ?? new Date().toISOString(),
+        });
+        return;
+      }
+    } catch {
+      // fallback below
+    }
+
+    setBioTrust({
+      score: 86,
+      confidence: 92,
+      driftRisk: 14,
+      lastCheck: new Date().toISOString(),
+    });
+  }, []);
+
+  const fetchPodTtl = useCallback(async () => {
+    const nowEpochSec = Math.floor(Date.now() / 1000);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/infra/pods/ttl`);
+      if (res.ok) {
+        const data = await res.json();
+        const pods = Array.isArray(data?.pods) ? data.pods : [];
+        setPodTtls(
+          pods.slice(0, 5).map((p: any) => ({
+            name: String(p.name ?? 'unknown-pod'),
+            namespace: String(p.namespace ?? 'cybershield'),
+            ageSec: Number(p.age_sec ?? 0),
+            ttlSec: Number(p.ttl_sec ?? 3600),
+            fetchedAtEpochSec: nowEpochSec,
+          })),
+        );
+        return;
+      }
+    } catch {
+      // fallback below
+    }
+
+    setPodTtls([
+      { name: 'threat-detection-ephem-7b9d', namespace: 'cybershield', ageSec: 1460, ttlSec: 3600, fetchedAtEpochSec: nowEpochSec },
+      { name: 'sandbox-runner-ephem-33c1', namespace: 'cybershield', ageSec: 2920, ttlSec: 3600, fetchedAtEpochSec: nowEpochSec },
+      { name: 'forensics-job-ephem-a2f0', namespace: 'cybershield', ageSec: 810, ttlSec: 1800, fetchedAtEpochSec: nowEpochSec },
+    ]);
   }, []);
 
   const fetchLiveData = useCallback(async () => {
@@ -178,12 +261,21 @@ export default function Dashboard() {
   useEffect(() => {
     fetchLiveData();
     fetchPhishingStats();
+    fetchBioTrust();
+    fetchPodTtl();
     const interval = setInterval(() => {
       fetchLiveData();
       fetchPhishingStats();
+      fetchBioTrust();
+      fetchPodTtl();
     }, 30_000);
     return () => clearInterval(interval);
-  }, [fetchLiveData, fetchPhishingStats]);
+  }, [fetchLiveData, fetchPhishingStats, fetchBioTrust, fetchPodTtl]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // WebSocket connection
   useEffect(() => {
@@ -212,6 +304,33 @@ export default function Dashboard() {
       .filter(([, v]) => (v as number) > 0)
       .map(([name, value]) => ({ name, value }));
   }, [metrics]);
+
+  const mitreHeatmap = useMemo(() => {
+    const counts = new Map<string, number>();
+    alerts.forEach((a) => {
+      if (!a.mitre_technique) return;
+      counts.set(a.mitre_technique, (counts.get(a.mitre_technique) || 0) + 1);
+    });
+
+    const rows = MITRE_MATRIX.map((row) => {
+      const cells = row.techniques.map((tech) => ({
+        technique: tech,
+        count: counts.get(tech) || 0,
+      }));
+      const covered = cells.filter((c) => c.count > 0).length;
+      return {
+        tactic: row.tactic,
+        coverage: Math.round((covered / row.techniques.length) * 100),
+        cells,
+      };
+    });
+
+    const overall = Math.round(
+      rows.reduce((acc, r) => acc + r.coverage, 0) / (rows.length || 1),
+    );
+
+    return { rows, overall };
+  }, [alerts]);
 
   if (!metrics) return <div className="text-center mt-20 text-gray-400">Connecting to backend...</div>;
 
@@ -376,6 +495,107 @@ export default function Dashboard() {
           <AlertFeed alerts={alerts.slice(0, 15)} />
         </div>
 
+        {/* MITRE ATT&CK Heatmap */}
+        <div className="col-span-12 lg:col-span-8 card">
+          <div className="card-header flex items-center justify-between">
+            <span>MITRE ATT&amp;CK Coverage Heatmap</span>
+            <span className="text-xs text-gray-400">Overall: {mitreHeatmap.overall}%</span>
+          </div>
+          <div className="space-y-2">
+            {mitreHeatmap.rows.map((row) => (
+              <div key={row.tactic} className="grid grid-cols-12 gap-2 items-center">
+                <div className="col-span-12 sm:col-span-3 text-xs text-gray-300">{row.tactic}</div>
+                <div className="col-span-9 sm:col-span-7 grid grid-cols-3 gap-1">
+                  {row.cells.map((cell) => {
+                    const intensity = Math.min(cell.count, 6);
+                    const classes = [
+                      'bg-slate-800/70 border-slate-700',
+                      'bg-emerald-900/30 border-emerald-700/40',
+                      'bg-amber-900/30 border-amber-700/50',
+                      'bg-red-900/35 border-red-700/60',
+                    ];
+                    const level = intensity === 0 ? 0 : intensity <= 2 ? 1 : intensity <= 4 ? 2 : 3;
+                    return (
+                      <div
+                        key={cell.technique}
+                        className={`text-[11px] px-2 py-1 rounded border ${classes[level]}`}
+                        title={`${cell.technique} • ${cell.count} detections`}
+                      >
+                        {cell.technique}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="col-span-3 sm:col-span-2 text-right text-xs text-gray-400">{row.coverage}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Bio-Auth Trust Score */}
+        {bioTrust && (
+          <div className="col-span-12 md:col-span-6 lg:col-span-4 card">
+            <div className="card-header">Bio-Auth Trust Score</div>
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-end gap-2">
+                  <span className="text-3xl font-bold text-cyan-300">{bioTrust.score}</span>
+                  <span className="text-sm text-gray-400">/100</span>
+                </div>
+                <div className="mt-2 h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full ${bioTrust.score >= 80 ? 'bg-green-500' : bioTrust.score >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                    style={{ width: `${Math.min(Math.max(bioTrust.score, 0), 100)}%` }}
+                  />
+                </div>
+              </div>
+              <StatRow label="Confidence" value={`${bioTrust.confidence}%`} color="text-emerald-400" />
+              <StatRow
+                label="Drift risk"
+                value={`${bioTrust.driftRisk}%`}
+                color={bioTrust.driftRisk > 30 ? 'text-red-400' : 'text-yellow-400'}
+              />
+              <StatRow
+                label="Last check"
+                value={new Date(bioTrust.lastCheck).toLocaleTimeString()}
+                color="text-gray-300"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Ephemeral Pod TTL Countdown */}
+        <div className="col-span-12 md:col-span-6 lg:col-span-8 card">
+          <div className="card-header">Ephemeral Pod Age / TTL Countdown</div>
+          <div className="space-y-2">
+            {podTtls.length === 0 && <p className="text-sm text-gray-500">No ephemeral pods reported.</p>}
+            {podTtls.map((pod) => {
+              const elapsed = Math.max(Math.floor(nowMs / 1000) - pod.fetchedAtEpochSec, 0);
+              const remaining = Math.max(pod.ttlSec - pod.ageSec - elapsed, 0);
+              const pct = Math.max(Math.min((remaining / Math.max(pod.ttlSec, 1)) * 100, 100), 0);
+              return (
+                <div key={pod.name} className="p-2 rounded-lg bg-[#0F172A] border border-slate-800">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-300 font-mono truncate mr-2">{pod.name}</span>
+                    <span className={remaining < 300 ? 'text-red-400' : 'text-gray-400'}>
+                      {formatDuration(remaining)} left
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className={`h-full ${remaining < 300 ? 'bg-red-500' : remaining < 900 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 text-[11px] text-gray-500">
+                    ns: {pod.namespace} • age {formatDuration(pod.ageSec)} / ttl {formatDuration(pod.ttlSec)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Service Health */}
         {services.length > 0 && (
           <div className="col-span-12 card">
@@ -478,4 +698,13 @@ function StatRow({ label, value, color }: { label: string; value: string; color:
       <span className={`font-semibold tabular-nums ${color}`}>{value}</span>
     </div>
   );
+}
+
+function formatDuration(seconds: number) {
+  const s = Math.max(seconds, 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${m}m ${sec}s`;
+  return `${m}m ${sec}s`;
 }
