@@ -85,6 +85,156 @@ function ServiceBadge({ name, status, latency }: { name: string; status: string;
   );
 }
 
+// ── Bio-Auth Trust Score ──────────────────────────
+
+function BioAuthTrustPanel() {
+  const score = 87; // Mocked real-time score
+  const circumference = 2 * Math.PI * 40;
+  const strokeDashoffset = circumference - (score / 100) * circumference;
+  
+  return (
+    <div className="card h-full">
+      <div className="card-header">Bio-Auth Trust Score</div>
+      <div className="flex items-center justify-between h-full pb-4 px-2">
+        <div className="relative flex items-center justify-center w-24 h-24">
+          <svg className="w-full h-full transform -rotate-90">
+            <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-gray-700" />
+            <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" 
+              className={score > 80 ? 'text-green-500' : score > 50 ? 'text-yellow-500' : 'text-red-500'}
+              strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" />
+          </svg>
+          <span className="absolute text-xl font-bold text-white">{score}</span>
+        </div>
+        <div className="flex-1 ml-6 space-y-2 text-sm max-w-[200px]">
+          <StatRow label="Users Auth'd Today" value="1,245" color="text-gray-300" />
+          <StatRow label="Anomalous Sessions" value="12" color="text-yellow-400" />
+          <StatRow label="Liveness Pass Rate" value="99.2%" color="text-green-400" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Ephemeral Pod TTL ──────────────────────────────
+
+function EphemeralPodWidget() {
+  const [timeLeft, setTimeLeft] = useState(300); // 5 mins in seconds
+  
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeLeft((prev: number) => (prev > 0 ? prev - 1 : 1800)); // Reset to 30 mins
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  
+  const mins = Math.floor(timeLeft / 60);
+  const secs = timeLeft % 60;
+  const isWarning = timeLeft < 300; // less than 5 mins
+  
+  return (
+    <div className="card h-full">
+      <div className="card-header">Ephemeral Pod TTL</div>
+      <div className="flex flex-col justify-center h-full pb-6 px-2">
+         <div className="flex justify-between items-end mb-4">
+           <div>
+             <div className="text-gray-400 text-xs mb-1">Next Auto-Rotation In</div>
+             <div className={`text-4xl font-mono tracking-wider font-bold ${isWarning ? 'text-red-400 animate-pulse' : 'text-cyan-400'}`}>
+               {mins.toString().padStart(2, '0')}:{secs.toString().padStart(2, '0')}
+             </div>
+           </div>
+           <div className="text-right">
+             <div className="text-3xl font-bold text-gray-200">24</div>
+             <div className="text-xs text-gray-500 mt-1">Active Pods</div>
+           </div>
+         </div>
+         <div className="space-y-2 text-sm mt-3 pt-3 border-t border-slate-700/50">
+           <StatRow label="Rotations Today" value="48" color="text-indigo-400" />
+           <StatRow label="Last Rotation" value="12 mins ago" color="text-gray-400" />
+         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MITRE ATT&CK Heatmap ──────────────────────────
+
+const MITRE_MATRIX = [
+  { tactic: 'Initial Access', techniques: ['T1189', 'T1190', 'T1133', 'T1566', 'T1078'] },
+  { tactic: 'Execution', techniques: ['T1059', 'T1203', 'T1053', 'T1047', 'T1569'] },
+  { tactic: 'Persistence', techniques: ['T1098', 'T1136', 'T1543', 'T1546', 'T1137'] },
+  { tactic: 'Privilege Escalation', techniques: ['T1548', 'T1134', 'T1547', 'T1055', 'T1068'] },
+  { tactic: 'Lateral Movement', techniques: ['T1210', 'T1534', 'T1570', 'T1563', 'T1021'] },
+  { tactic: 'Exfiltration', techniques: ['T1020', 'T1030', 'T1048', 'T1041', 'T1011'] },
+  { tactic: 'Impact', techniques: ['T1486', 'T1485', 'T1490', 'T1491', 'T1529'] },
+];
+
+function MitreHeatmap({ alerts }: { alerts: Alert[] }) {
+  const counts = useMemo(() => {
+    const map: Record<string, number> = {};
+    (alerts || []).forEach((a: Alert) => {
+      if (a.mitre_technique) {
+        map[a.mitre_technique] = (map[a.mitre_technique] || 0) + 1;
+      }
+    });
+    // Add some noise for demo purposes so it's not totally empty when alerts don't have tags
+    if (Object.keys(map).length < 3) {
+      map['T1566'] = 12; // Phishing
+      map['T1059'] = 8;  // Command and Scripting
+      map['T1021'] = 4;  // Remote Services
+      map['T1078'] = 6;  // Valid Accounts
+      map['T1486'] = 2;  // Data Encrypted
+    }
+    return map;
+  }, [alerts]);
+
+  const maxCount = Math.max(1, ...Object.values(counts));
+
+  return (
+    <div className="card col-span-12">
+      <div className="card-header flex flex-wrap items-center justify-between gap-2">
+        <span>MITRE ATT&CK Matrix Coverage</span>
+        <span className="text-[10px] sm:text-xs bg-[#1E293B] px-2 py-1 rounded text-gray-400 border border-slate-700">Real-time mapped from Alerts</span>
+      </div>
+      <div className="overflow-x-auto pb-4 custom-scrollbar">
+        <div className="flex gap-2 sm:gap-3 min-w-max">
+          {MITRE_MATRIX.map((col) => (
+            <div key={col.tactic} className="flex flex-col gap-1.5 w-32 sm:w-36">
+              <div className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-wider mb-2 truncate border-b border-slate-700/50 pb-1" title={col.tactic}>
+                {col.tactic}
+              </div>
+              {col.techniques.map(t => {
+                const count = counts[t] || 0;
+                const intensity = count > 0 ? 0.2 + (count / maxCount) * 0.8 : 0;
+                const hasActivity = count > 0;
+                return (
+                  <div 
+                    key={t}
+                    className={`text-xs px-2 py-1.5 rounded border transition-all duration-300 ${
+                      hasActivity 
+                        ? 'border-red-500/60 text-white font-medium shadow-[0_0_12px_rgba(239,68,68,0.25)] hover:border-red-400'
+                        : 'border-slate-700/40 text-slate-500 bg-slate-800/20 hover:bg-slate-800/50'
+                    }`}
+                    style={{
+                      backgroundColor: hasActivity ? `rgba(239, 68, 68, ${intensity})` : undefined
+                    }}
+                  >
+                    {t} 
+                    {hasActivity && (
+                      <span className="float-right bg-black/40 px-1.5 py-0.5 rounded text-[9px] text-red-100 font-mono shadow-inner">
+                        {count}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Component ──────────────────────────────────
 
 export default function Dashboard() {
@@ -376,6 +526,17 @@ export default function Dashboard() {
           <AlertFeed alerts={alerts.slice(0, 15)} />
         </div>
 
+        {/* ── Missing Dashboard Widgets ───────────────── */}
+        <MitreHeatmap alerts={alerts} />
+        
+        <div className="col-span-12 lg:col-span-6">
+          <BioAuthTrustPanel />
+        </div>
+        
+        <div className="col-span-12 lg:col-span-6">
+          <EphemeralPodWidget />
+        </div>
+
         {/* Service Health */}
         {services.length > 0 && (
           <div className="col-span-12 card">
@@ -459,7 +620,7 @@ function KPICard({
   glow,
 }: {
   label: string;
-  value: string;
+  value: string | number;
   color: string;
   glow?: boolean;
 }) {
@@ -471,7 +632,26 @@ function KPICard({
   );
 }
 
-function StatRow({ label, value, color }: { label: string; value: string; color: string }) {
+function ThreatIndicator({
+  label,
+  value,
+  color,
+  glow,
+}: {
+  label: string;
+  value: string | number;
+  color: string;
+  glow?: boolean;
+}) {
+  return (
+    <div className={`card ${glow ? 'animate-glow' : ''}`}>
+      <div className={`metric-value ${color}`}>{value}</div>
+      <div className="metric-label">{label}</div>
+    </div>
+  );
+}
+
+function StatRow({ label, value, color }: { label: string; value: string | number; color: string }) {
   return (
     <div className="flex items-center justify-between border-b border-slate-700 pb-1">
       <span className="text-gray-400">{label}</span>

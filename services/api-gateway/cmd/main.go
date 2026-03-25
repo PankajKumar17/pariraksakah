@@ -707,6 +707,11 @@ func main() {
 	// ── Public Dashboard Data (no JWT required) ──
 	r.Get("/api/v1/dashboard", liveDashboardHandler)
 	r.Get("/api/v1/alerts", liveAlertsHandler)
+	
+	// ── AI Investigator (Claude API Proxy) ──
+	// Allow CORS preflight for this manual ad-hoc endpoint too since it's called direct
+	r.Options("/api/ai/investigate", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	r.Post("/api/ai/investigate", handleAIInvestigate)
 
 	// ── Public Auth (login to get JWT) ──
 	r.Post("/api/v1/auth/login", proxyToExact(services["access-control"].URL+"/auth/login"))
@@ -1049,6 +1054,93 @@ func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"alerts": alerts, "total": 30})
+}
+
+// ── AI Investigator (Claude API Proxy) ────────
+
+type AIInvestigateReq struct {
+	IncidentID string `json:"incident_id"`
+	Severity   string `json:"severity"`
+	Playbook   string `json:"playbook"`
+	Message    string `json:"message"`
+}
+
+type AnthropicReq struct {
+	Model     string              `json:"model"`
+	MaxTokens int                 `json:"max_tokens"`
+	System    string              `json:"system"`
+	Messages  []map[string]string `json:"messages"`
+}
+
+func handleAIInvestigate(w http.ResponseWriter, r *http.Request) {
+	var req AIInvestigateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		// Fallback to demo mode
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"mode": "demo",
+			"text": fmt.Sprintf("Demo response for incident %s. Please set ANTHROPIC_API_KEY in the API Gateway environment to enable live Claude 3 analysis.\n\nUser asked: %s", req.IncidentID, req.Message),
+		})
+		return
+	}
+
+	sysPrompt := fmt.Sprintf("You are an expert SOC Analyst and Incident Responder. You are investigating incident %s (Severity: %s). The current playbook is: %s. Provide concise, tactical advice. Do not output markdown code blocks unless necessary.", req.IncidentID, req.Severity, req.Playbook)
+
+	anthropicPayload := AnthropicReq{
+		Model:     "claude-3-haiku-20240307",
+		MaxTokens: 1024,
+		System:    sysPrompt,
+		Messages: []map[string]string{
+			{"role": "user", "content": req.Message},
+		},
+	}
+
+	bodyBytes, _ := json.Marshal(anthropicPayload)
+	httpReq, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(string(bodyBytes)))
+	httpReq.Header.Set("x-api-key", apiKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("content-type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"mode": "demo",
+			"text": "Failed to reach Anthropic API... Fallback demo triggered.",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"mode": "demo",
+			"text": fmt.Sprintf("Anthropic API returned status %d. Please check your API key.", resp.StatusCode),
+		})
+		return
+	}
+
+	var anthropicResp struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	json.NewDecoder(resp.Body).Decode(&anthropicResp)
+
+	text := "No response"
+	if len(anthropicResp.Content) > 0 {
+		text = anthropicResp.Content[0].Text
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"mode": "live",
+		"text": text,
+	})
 }
 
 // ── Aggregated Innovations Status ──────────────
