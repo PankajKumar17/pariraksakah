@@ -10,6 +10,9 @@ export interface Alert {
   description: string;
   timestamp: string;
   mitre_technique?: string;
+  campaign_id?: string;
+  kill_chain_stage?: string;
+  campaign_risk_score?: number;
   status: 'open' | 'investigating' | 'resolved';
 }
 

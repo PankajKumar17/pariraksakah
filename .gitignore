@@ -34,6 +34,7 @@ target/
 dist/
 build/
 node_modules/
+services/*/cmd.exe
 
 # Logs
 *.log

@@ -286,13 +286,13 @@ export default function IncidentResponse() {
             {PLAYBOOKS.map((pb) => (
               <div
                 key={pb.name}
-                className="flex flex-wrap items-start sm:items-center justify-between gap-2 p-3 bg-[#0F172A] rounded-lg hover:bg-[#0F172A]/70 transition-colors"
+                className="flex flex-wrap items-start sm:items-center justify-between gap-2 p-3 bg-[#F5F8FF] border border-[#E2E9FA] rounded-lg hover:bg-[#EEF4FF] transition-colors"
               >
                 <div className="min-w-0">
-                  <div className="text-sm font-medium text-gray-200 truncate">
+                  <div className="text-sm font-medium text-slate-800 truncate">
                     {pb.name.replace(/_/g, ' ')}
                   </div>
-                  <div className="text-xs text-gray-500 mt-0.5 truncate">
+                  <div className="text-xs text-slate-500 mt-0.5 truncate">
                     {pb.steps} steps · {pb.trigger}
                   </div>
                 </div>
@@ -300,7 +300,7 @@ export default function IncidentResponse() {
                   <span className={`badge ${SEVERITY_STYLES[pb.severity]}`}>
                     {pb.severity}
                   </span>
-                  <button className="px-2 py-1 bg-[#6C63FF]/20 text-[#6C63FF] rounded text-xs hover:bg-[#6C63FF]/30 transition-colors">
+                  <button className="px-2 py-1 bg-[#517EF9]/14 text-[#517EF9] rounded text-xs hover:bg-[#517EF9]/22 transition-colors">
                     Run
                   </button>
                 </div>
@@ -323,8 +323,8 @@ export default function IncidentResponse() {
                     onClick={() => setSelectedIncident(inc)}
                     className={`flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2 p-3 rounded-lg cursor-pointer transition-colors ${
                       selectedIncident.id === inc.id
-                        ? 'bg-[#6C63FF]/10 border border-[#6C63FF]/30'
-                        : 'bg-[#0F172A] hover:bg-[#0F172A]/70'
+                        ? 'bg-[#517EF9]/10 border border-[#517EF9]/30'
+                        : 'bg-[#F5F8FF] border border-[#E2E9FA] hover:bg-[#EEF4FF]'
                     }`}
                   >
                     <div className="flex items-start sm:items-center gap-3 min-w-0">
@@ -333,7 +333,7 @@ export default function IncidentResponse() {
                       </span>
                       <div className="min-w-0">
                         <div className="text-sm font-medium break-words">{inc.title}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">
+                        <div className="text-xs text-slate-500 mt-0.5">
                           {inc.id} · {inc.playbook} · {new Date(inc.started_at).toLocaleTimeString()}
                         </div>
                       </div>
@@ -354,19 +354,19 @@ export default function IncidentResponse() {
             <div className="card-header">
               Incident Timeline — {selectedIncident.id}
             </div>
-            <div className="relative ml-4 border-l-2 border-[#6C63FF]/30 space-y-4 py-2">
+            <div className="relative ml-4 border-l-2 border-[#517EF9]/30 space-y-4 py-2">
               {selectedIncident.events.map((event, i) => (
                 <div key={i} className="relative pl-6">
-                  <div className="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-[#6C63FF] border-2 border-[#1E293B]" />
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-[#517EF9] border-2 border-white" />
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
                     <span className="font-mono">{event.timestamp}</span>
                     <span>·</span>
-                    <span className="text-[#6C63FF]">{event.actor}</span>
+                    <span className="text-[#517EF9]">{event.actor}</span>
                   </div>
-                  <div className="text-sm font-medium text-gray-200 mt-0.5">
+                  <div className="text-sm font-medium text-slate-800 mt-0.5">
                     {event.action}
                   </div>
-                  <div className="text-sm text-gray-400 mt-0.5">
+                  <div className="text-sm text-slate-600 mt-0.5">
                     {event.detail}
                   </div>
                 </div>
@@ -377,15 +377,10 @@ export default function IncidentResponse() {
           <ForensicEvidenceChain incidentId={selectedIncident.id} />
         </div>
 
-        {/* AI Investigator (Claude Copilot) */}
-        <div className="col-span-12 card flex flex-col h-[500px]">
-          <div className="card-header pb-2 border-b border-slate-700/50 mb-0 flex justify-between items-center">
-            <span>🧠 AI Investigator</span>
-            <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded border border-indigo-500/30 font-mono">
-              Claude 3 Haiku
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-4 p-4 bg-[#0B1120] custom-scrollbar">
+        {/* Incident Chat / Copilot */}
+        <div className="col-span-12 card">
+          <div className="card-header">Incident Copilot</div>
+          <div className="h-48 overflow-y-auto space-y-3 mb-3 p-3 bg-[#F5F8FF] border border-[#E2E9FA] rounded-lg">
             {chatMessages.map((msg, i) => (
               <div
                 key={i}
@@ -399,10 +394,10 @@ export default function IncidentResponse() {
                 <div
                   className={`max-w-[85%] px-4 py-3 rounded-lg text-sm leading-relaxed ${
                     msg.role === 'user'
-                      ? 'bg-[#6C63FF] text-white shadow-lg'
+                      ? 'bg-[#517EF9] text-white'
                       : msg.role === 'assistant'
-                      ? 'bg-[#1E293B] text-gray-200 border border-slate-700 shadow-md'
-                      : 'bg-transparent text-gray-500 italic border border-slate-700/50 p-2 text-xs text-center mx-auto'
+                      ? 'bg-white text-slate-700 border border-[#D8E3F7]'
+                      : 'bg-[#EEF4FF] text-slate-500 italic'
                   }`}
                 >
                   {msg.text}
@@ -427,25 +422,21 @@ export default function IncidentResponse() {
               </div>
             )}
           </div>
-          <div className="p-3 border-t border-slate-700/50 bg-[#0F172A] rounded-b-lg">
-            <div className="flex gap-2 relative">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
-                placeholder="Ask about this incident, request mitigations, or analyze logs..."
-                disabled={isThinking}
-                className="flex-1 bg-[#1E293B] border border-slate-600 rounded-lg pl-4 pr-12 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-gray-100 placeholder-gray-500 transition-all disabled:opacity-50"
-              />
-              <button
-                onClick={handleSendChat}
-                disabled={isThinking || !chatInput.trim()}
-                className="absolute right-1.5 top-1.5 bottom-1.5 px-3 bg-indigo-500 text-white rounded-md text-xs font-semibold hover:bg-indigo-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                SEND
-              </button>
-            </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
+              placeholder="Ask about incidents, playbooks, or recommended actions..."
+              className="flex-1 bg-white border border-[#D8E3F7] rounded-lg px-4 py-2 text-sm outline-none focus:border-[#517EF9] text-slate-800 placeholder-slate-400"
+            />
+            <button
+              onClick={handleSendChat}
+              className="px-4 py-2 bg-[#517EF9] text-white rounded-lg text-sm font-medium hover:bg-[#436FE8] transition-colors"
+            >
+              Send
+            </button>
           </div>
         </div>
       </div>

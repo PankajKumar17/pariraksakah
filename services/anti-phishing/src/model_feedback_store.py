@@ -5,13 +5,18 @@ to a JSONL file for periodic model retraining.
 """
 
 import csv
-import fcntl
 import json
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
+try:
+    import fcntl  # Unix-only
+except ImportError:  # pragma: no cover - Windows path
+    fcntl = None
 
 logger = logging.getLogger("cybershield.antiphishing.feedback_store")
 
@@ -34,6 +39,19 @@ class FeedbackStore:
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
         self._lock = threading.Lock()
 
+    @contextmanager
+    def _file_lock(self, fh):
+        """Best-effort inter-process lock; falls back to no-op on non-Unix."""
+        if fcntl is None:
+            yield
+            return
+
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
     # ── Write ──────────────────────────────────────────────────────────────────
 
     def append(self, text: str, predicted_label: str, correct_label: str) -> int:
@@ -49,11 +67,8 @@ class FeedbackStore:
         }
         with self._lock:
             with open(self._path, "a", encoding="utf-8") as fh:
-                fcntl.flock(fh, fcntl.LOCK_EX)
-                try:
+                with self._file_lock(fh):
                     fh.write(json.dumps(record) + "\n")
-                finally:
-                    fcntl.flock(fh, fcntl.LOCK_UN)
         logger.debug("Feedback appended: predicted=%s correct=%s", predicted_label, correct_label)
         return self.get_pending_count()
 
