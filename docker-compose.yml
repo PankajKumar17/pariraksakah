@@ -310,6 +310,32 @@ services:
     restart: unless-stopped
     networks: [cybershield-net]
 
+  quantum-cbom-scanner:
+    build:
+      context: ./services/quantum-crypto/scanner
+      dockerfile: Dockerfile
+    ports: ["8030:8030"]
+    environment:
+      <<: *common-env
+      QUANTUM_SCANNER_PORT: "8030"
+      SCAN_ROOT: "/app/codebase"
+    volumes:
+      - .:/app/codebase:ro
+    depends_on: [redis, timescaledb]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-agility-api:
+    build:
+      context: ./services/quantum-crypto/src
+      dockerfile: Dockerfile
+    ports: ["8031:8031"]
+    environment:
+      <<: *common-env
+      CRYPTO_AGILITY_PORT: "8031"
+    restart: unless-stopped
+    networks: [cybershield-net]
+
 volumes:
   postgres-data:
   neo4j-data:
