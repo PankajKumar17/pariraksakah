@@ -75,6 +75,23 @@ type CreateIncidentRequest struct {
 	Description string `json:"description"`
 }
 
+type IncidentReport struct {
+	IncidentID        string         `json:"incident_id"`
+	Title             string         `json:"title"`
+	Severity          string         `json:"severity"`
+	Status            string         `json:"status"`
+	Metrics           IncidentMetrics`json:"metrics"`
+	ExecutiveSummary  string         `json:"executive_summary"`
+	TimelineEvents    []audit.Entry  `json:"timeline_events"`
+	GeneratedAt       time.Time      `json:"generated_at"`
+}
+
+type IncidentMetrics struct {
+	TimeToDetectMs  int64 `json:"time_to_detect_ms"` // Diff btn attack and alert (Assumed instantaneous for demo)
+	TimeToRespondMs int64 `json:"time_to_respond_ms"`// Diff btn alert creation and playbook start
+	TimeToContainMs int64 `json:"time_to_contain_ms"`// Diff btn alert creation and playbook completion
+}
+
 // ── In-memory store ────────────────────────────
 
 var (
@@ -370,6 +387,50 @@ func getIncident(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(inc)
 }
 
+func generateIncidentReport(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	
+	incidentsMu.RLock()
+	inc, ok := incidents[id]
+	incidentsMu.RUnlock()
+	
+	if !ok {
+		http.Error(w, `{"error":"incident not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Fetch Audit Trail
+	entries, err := auditStore.QueryByIncident(id)
+	if err != nil {
+		entries = []audit.Entry{}
+	}
+
+	metrics := IncidentMetrics{
+		TimeToDetectMs: 0, // Instantaneous in our mocked data
+	}
+
+	if inc.PlaybookRun != nil {
+		metrics.TimeToRespondMs = inc.PlaybookRun.StartedAt.Sub(inc.CreatedAt).Milliseconds()
+		if inc.PlaybookRun.CompletedAt != nil {
+			metrics.TimeToContainMs = inc.PlaybookRun.CompletedAt.Sub(inc.CreatedAt).Milliseconds()
+		}
+	}
+
+	report := IncidentReport{
+		IncidentID:       inc.ID,
+		Title:            fmt.Sprintf("%s on %s", inc.AlertType, inc.Host),
+		Severity:         inc.Severity,
+		Status:           inc.Status,
+		Metrics:          metrics,
+		ExecutiveSummary: fmt.Sprintf("Incident %s involving %s was classified as %s severity. Current status is %s. %d playbook steps were requested.", inc.ID, inc.AlertType, inc.Severity, inc.Status, len(entries)),
+		TimelineEvents:   entries,
+		GeneratedAt:      time.Now(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
+}
+
 func executeIncidentPlaybook(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	incidentsMu.RLock()
@@ -494,6 +555,7 @@ func main() {
 	r.Post("/incidents", createIncident)
 	r.Get("/incidents", listIncidents)
 	r.Get("/incidents/{id}", getIncident)
+	r.Get("/incidents/{id}/report", generateIncidentReport)
 	r.Post("/incidents/{id}/execute", executeIncidentPlaybook)
 	r.Get("/playbooks", listPlaybooks)
 
