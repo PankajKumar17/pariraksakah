@@ -324,12 +324,33 @@ class AlertEngine:
             except Exception:
                 logger.error("Failed to publish alert %s", alert.alert_id, exc_info=True)
 
+        # ── Forward to SIEM Connector ──
+        asyncio.ensure_future(self._forward_to_siem(alert))
+
         self._alert_count += 1
         logger.info(
             "Alert %s | %s | %s | score=%.3f | %s",
             alert.alert_id[:8], alert.severity, attack_type, threat_score, source_ip,
         )
         return alert
+
+    async def _forward_to_siem(self, alert: Alert) -> None:
+        """Fire-and-forget: forward alert to SIEM connector service."""
+        import os
+        siem_url = os.getenv("SIEM_CONNECTOR_URL", "http://siem-connector:8010")
+        try:
+            import httpx
+            payload = asdict(alert)
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.post(f"{siem_url}/forward", json=payload)
+                if resp.status_code == 200:
+                    logger.debug("Alert %s forwarded to SIEM connector", alert.alert_id[:8])
+                else:
+                    logger.warning("SIEM connector returned HTTP %d for alert %s", resp.status_code, alert.alert_id[:8])
+        except Exception as exc:
+            # Never block the alert pipeline — log and ignore
+            logger.debug("SIEM connector unreachable (alert %s): %s", alert.alert_id[:8], exc)
+
 
     async def _persist_alert(self, alert: Alert) -> None:
         """Insert alert into TimescaleDB."""
