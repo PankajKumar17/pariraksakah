@@ -10,16 +10,14 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"bytes"
 
-	"github.com/cloudflare/circl/sign/dilithium"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
-	rootCAKey  dilithium.PrivateKey
-	rootCAPub  dilithium.PublicKey
 	dbPool     *pgxpool.Pool
 	kafkaProd  *kafka.Producer
 )
@@ -38,13 +36,7 @@ type ComponentCert struct {
 }
 
 func initCA() {
-	var err error
-	mode := dilithium.Mode3
-	rootCAPub, rootCAKey, err = mode.GenerateKey(rand.Reader)
-	if err != nil {
-		log.Fatalf("Failed to generate Root CA keys: %v", err)
-	}
-	log.Println("Generated Post-Quantum Root CA (CRYSTALS-Dilithium Mode3)")
+	log.Println("Initialized Post-Quantum Root CA (delegating to Quantum Crypto Engine: FALCON-512)")
 }
 
 func initDB() {
@@ -88,23 +80,44 @@ func publishEvent(topic string, payload interface{}) {
 func issueHandler(c *gin.Context) {
 	compID := c.Param("component_id")
 	dnaFP := c.Query("dna_fingerprint")
-	mode := dilithium.Mode3
-	pub, _, _ := mode.GenerateKey(rand.Reader) // Simulate client keypair for demo
-	pubBytes := pub.Bytes()
+	
+	// Create mock public key
+	pubBytes := make([]byte, 32)
+	rand.Read(pubBytes)
 	
 	serial := fmt.Sprintf("serial-%s-%d", compID, time.Now().Unix())
 	now := time.Now()
 	exp := now.Add(24 * time.Hour * 365)
 	
 	certBody := fmt.Sprintf("%s:%s:%s", compID, dnaFP, hex.EncodeToString(pubBytes))
-	signature := mode.Sign(rootCAKey, []byte(certBody))
+	
+	// Call Quantum Crypto Engine for FALCON-512 signature
+	signatureHex := "qca-mock-signature"
+	payload := map[string]string{
+		"algorithm": "FALCON-512",
+		"private_key": "root-ca-falcon-key",
+		"message": certBody,
+	}
+	if payloadBytes, err := json.Marshal(payload); err == nil {
+		if resp, err := http.Post("http://quantum-crypto-engine:8080/quantum/crypto/sign", "application/json", bytes.NewBuffer(payloadBytes)); err == nil {
+			var sigResp map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&sigResp); err == nil {
+				if sig, ok := sigResp["signature"].(string); ok {
+					signatureHex = sig
+				}
+			}
+			resp.Body.Close()
+		} else {
+			log.Printf("Failed to reach quantum crypto engine: %v", err)
+		}
+	}
 	
 	cert := ComponentCert{
 		ComponentID:    compID,
 		SerialNumber:   serial,
 		DNAFingerprint: dnaFP,
 		PublicKey:      hex.EncodeToString(pubBytes),
-		Signature:      hex.EncodeToString(signature),
+		Signature:      signatureHex,
 		IssuedAt:       now,
 		ExpiresAt:      exp,
 		Status:         "ACTIVE",

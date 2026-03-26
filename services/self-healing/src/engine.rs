@@ -3,6 +3,8 @@ use crate::db::DbClient;
 use crate::models::{RemediationAction, ThreatEvent};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
+use reqwest::Client;
+use serde_json::json;
 
 pub struct SelfHealingEngine {
     rx: mpsc::Receiver<ThreatEvent>,
@@ -17,19 +19,49 @@ impl SelfHealingEngine {
 
     pub async fn run_loop(mut self) {
         info!("Autonomous Healing Loop started. Waiting for ThreatEvents...");
+        let http_client = Client::new();
+
         while let Some(event) = self.rx.recv().await {
             info!("Received Event: {:?}", event);
             let action = self.evaluate_policy(&event).await;
+
+            // Quantum Zero Trust Verification
+            if let Err(e) = self.verify_quantum_trust(&http_client, &action).await {
+                error!("Quantum Zero Trust verification failed: {}. Aborting remediation.", e);
+                self.log_audit(&http_client, &event, &action, "ZT_DENIED").await;
+                continue;
+            }
             
             match self.execute_remediation(&action).await {
                 Ok(_) => {
-                    self.log_audit(&event, &action, "SUCCESS").await;
+                    self.log_audit(&http_client, &event, &action, "SUCCESS").await;
                 }
                 Err(e) => {
                     error!("Failed to remediate: {:?}", e);
-                    self.log_audit(&event, &action, "FAILED").await;
+                    self.log_audit(&http_client, &event, &action, "FAILED").await;
                 }
             }
+        }
+    }
+
+    async fn verify_quantum_trust(&self, client: &Client, action: &RemediationAction) -> Result<(), String> {
+        info!("Verifying remediation action with Quantum Zero Trust Engine...");
+        let payload = json!({
+            "subject_id": "self-healing-engine",
+            "resource_id": format!("{:?}", action),
+            "identity_signature": "dilithium-self-healing-identity",
+            "challenge_entropy": "verified",
+            "response_signature": "dilithium-response"
+        });
+
+        match client.post("http://quantum-zero-trust:8087/quantum/zerotrust/verify")
+            .json(&payload)
+            .send()
+            .await 
+        {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(format!("ZT rejected with status {}", resp.status())),
+            Err(e) => Err(format!("Request failed: {}", e))
         }
     }
 
@@ -69,8 +101,26 @@ impl SelfHealingEngine {
         Ok(())
     }
 
-    async fn log_audit(&self, event: &ThreatEvent, action: &RemediationAction, status: &str) {
+    async fn log_audit(&self, client: &Client, event: &ThreatEvent, action: &RemediationAction, status: &str) {
         info!("AUDIT LOG: Status={} | Event={:?} | Action={:?}", status, event.cve_id, action);
+        
+        // Request Quantum Signature for Audit Log
+        let mut quantum_sig = String::from("unsigned");
+        let payload = json!({
+            "algorithm": "FALCON-512",
+            "private_key": "self-healing-sk",
+            "message": format!("Log: {} | {:?}", status, action)
+        });
+        
+        if let Ok(resp) = client.post("http://quantum-crypto-engine:8080/quantum/crypto/sign").json(&payload).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(sig) = json["signature"].as_str() {
+                    quantum_sig = sig.to_string();
+                }
+            }
+        }
+        info!("Quantum Audit Signature attached: {}", quantum_sig);
+
         if let Err(e) = self.db.log_autonomous_action(event, action, status).await {
             error!("Failed to write to immutable audit log: {}", e);
         }

@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Dict, Any
 from cortex_models import BrainCortexSystem
 import uuid
+import httpx
 
 app = FastAPI(title="Brain-Like Anomaly Detection Cortex")
 
@@ -18,6 +19,23 @@ class SecurityEvent(BaseModel):
 async def analyze_event(event: SecurityEvent, bg_tasks: BackgroundTasks):
     result = cortex.analyze_event(event.dict())
     
+    # Send event to Quantum Threat Detector for Grover-search based anomaly scoring
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.post("http://quantum-threat-detector:8083/quantum/threat/detect", json={
+                "event_id": str(uuid.uuid4()),
+                "source": event.source_service,
+                "payload": str(event.payload)
+            })
+            if resp.status_code == 200:
+                q_score = resp.json().get("quantum_risk_score", 0)
+                # Influence the neuormorphic result
+                result["quantum_augmented_risk"] = max(result.get("risk_score", 0), q_score)
+                if q_score > 0.8:
+                    result["tags"].append("QUANTUM_ANOMALY")
+    except Exception:
+        result["quantum_augmented_risk"] = result.get("risk_score", 0)
+        
     anomaly_id = str(uuid.uuid4())
     
     def async_record(res, eid):

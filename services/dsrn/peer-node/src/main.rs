@@ -59,6 +59,23 @@ async fn list_peers() -> impl Responder {
 
 async fn connect_peer(req: web::Json<ConnectReq>) -> impl Responder {
     let pid = format!("peer-{}", &blake3::hash(req.endpoint.as_bytes()).to_hex()[..16]);
+    
+    // Generate SPHINCS+ signature for peer identity using Quantum Crypto Engine
+    let mut q_signature = String::from("unsigned");
+    if let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build() {
+        let payload = serde_json::json!({
+            "algorithm": "SPHINCS+",
+            "private_key": format!("{}-sk", pid),
+            "message": format!("connect:{}->{}", *LOCAL_PEER_ID, pid)
+        });
+        if let Ok(resp) = client.post("http://quantum-crypto-engine:8080/quantum/crypto/sign").json(&payload).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(sig) = json["signature"].as_str() {
+                    q_signature = sig.to_string();
+                }
+            }
+        }
+    }
     let info = PeerInfo {
         peer_id: pid.clone(), organization_name: req.org_name.clone(),
         endpoint_url: req.endpoint.clone(), trust_score: 100.0, reputation_score: 100.0,
@@ -66,7 +83,10 @@ async fn connect_peer(req: web::Json<ConnectReq>) -> impl Responder {
         dna_fingerprint: blake3::hash(pid.as_bytes()).to_hex().to_string(),
     };
     PEERS.lock().unwrap().insert(pid.clone(), info.clone());
-    let event = serde_json::to_string(&info).unwrap();
+    let mut event_payload = serde_json::to_value(&info).unwrap();
+    event_payload["quantum_signature"] = serde_json::Value::String(q_signature);
+    
+    let event = serde_json::to_string(&event_payload).unwrap();
     kafka_publish("dsrn.peer.discovered", &event).await;
     HttpResponse::Ok().json(serde_json::json!({"connected": pid}))
 }

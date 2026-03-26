@@ -182,22 +182,34 @@ async def run_experiment(experiment_id: str, req: StartExperimentRequest):
         # 4. Execute injection
         if not req.dry_run:
             try:
-                async with httpx.AsyncClient(timeout=60) as client:
-                    inject_resp = await client.post(f"{AGENT_URL}/inject", json={
-                        "experiment_id": experiment_id,
-                        "scenario_id": req.scenario_id,
-                        "target_service": req.target_service,
-                        "injection_type": req.injection_type,
-                        "blast_radius": req.blast_radius.value,
-                    })
-                    if inject_resp.status_code == 200:
-                        logger.info(f"Injection started for {experiment_id}")
-                    else:
-                        logger.error(f"Injection failed: {inject_resp.text}")
+                # Quantum Attack Simulation Path
+                if req.injection_type == "quantum":
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        q_resp = await client.post("http://quantum-attack-simulator:8086/quantum/attack/shor", json={
+                            "key_size_bits": 2048, "crypto_type": "RSA"
+                        })
+                        if q_resp.status_code == 200:
+                            logger.info(f"Quantum Attack Simulated (Shor's) for {experiment_id}: {q_resp.json()}")
+                        else:
+                            logger.error(f"Quantum simulation failed: {q_resp.text}")
+                # Traditional Agent Path
+                else:
+                    async with httpx.AsyncClient(timeout=60) as client:
+                        inject_resp = await client.post(f"{AGENT_URL}/inject", json={
+                            "experiment_id": experiment_id,
+                            "scenario_id": req.scenario_id,
+                            "target_service": req.target_service,
+                            "injection_type": req.injection_type,
+                            "blast_radius": req.blast_radius.value,
+                        })
+                        if inject_resp.status_code == 200:
+                            logger.info(f"Injection started for {experiment_id}")
+                        else:
+                            logger.error(f"Injection failed: {inject_resp.text}")
             except Exception as e:
-                logger.error(f"Injection agent unreachable: {e}")
+                logger.error(f"Injection agent/simulator unreachable: {e}")
         else:
-            logger.info(f"DRY RUN: Simulating injection for {experiment_id}")
+            logger.info(f"DRY RUN: Simulating {req.injection_type} injection for {experiment_id}")
             await asyncio.sleep(5)
 
         # 5. Wait for results (max 5 minutes)

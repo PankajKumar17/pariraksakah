@@ -14,6 +14,7 @@ import asyncpg
 import redis.asyncio as aioredis
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import PlainTextResponse
+import httpx
 from pydantic import BaseModel
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
@@ -290,6 +291,19 @@ async def predict(signal: ThreatSignal, background_tasks: BackgroundTasks):
     """Core prediction endpoint — ingest a signal, return a ThreatPrediction."""
     fv = engineer_features(signal)
     anomaly_score = model_registry.score(fv)
+    
+    # Quantum ML Enhancement 
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.post("http://quantum-ml-anomaly:8084/quantum/ml/classify", 
+                                     json={"features": fv.flatten().tolist(), "model": "qsvm"})
+            if resp.status_code == 200:
+                q_score = resp.json().get("anomaly_score", anomaly_score)
+                # Boost anomaly score if quantum model detects subtle higher dimensional patterns
+                anomaly_score = max(anomaly_score, q_score)
+                log.info(f"Quantum ML applied: classical={anomaly_score:.3f}, q_score={q_score:.3f}")
+    except Exception as e:
+        log.warning(f"Quantum ML Anomaly service unavailable: {e}")
 
     ioc_count  = int(signal.features.get("ioc_match_count", 0))
     cve_max    = signal.features.get("cve_score_max", 0.0)

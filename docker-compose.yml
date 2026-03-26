@@ -670,6 +670,116 @@ services:
     restart: unless-stopped
     networks: [cybershield-net]
 
+  # ─── Quantum Security Suite ─────────────────────
+  quantum-crypto-engine:
+    build:
+      context: ./quantum/quantum-safe-crypto
+      dockerfile: Dockerfile
+    ports: ["8080:8080"]
+    environment:
+      <<: *common-env
+      QUANTUM_CRYPTO_PORT: "8080"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-qkd-simulator:
+    build:
+      context: ./quantum/quantum-key-distribution
+      dockerfile: Dockerfile
+    ports: ["8081:8081"]
+    environment:
+      <<: *common-env
+      QUANTUM_QKD_PORT: "8081"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-rng-service:
+    build:
+      context: ./quantum/quantum-random-number
+      dockerfile: Dockerfile
+    ports: ["8082:8082"]
+    environment:
+      <<: *common-env
+      QUANTUM_RNG_PORT: "8082"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-threat-detector:
+    build:
+      context: ./quantum/quantum-threat-detection
+      dockerfile: Dockerfile
+    ports: ["8083:8083"]
+    environment:
+      <<: *common-env
+      QUANTUM_THREAT_PORT: "8083"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-ml-anomaly:
+    build:
+      context: ./quantum/quantum-ml-anomaly
+      dockerfile: Dockerfile
+    ports: ["8084:8084"]
+    environment:
+      <<: *common-env
+      QUANTUM_ML_PORT: "8084"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on: [kafka, timescaledb, mlflow, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-supply-chain:
+    build:
+      context: ./quantum/quantum-supply-chain
+      dockerfile: Dockerfile
+    ports: ["8085:8085"]
+    environment:
+      <<: *common-env
+      QUANTUM_SUPPLY_PORT: "8085"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-attack-simulator:
+    build:
+      context: ./quantum/quantum-attack-simulation
+      dockerfile: Dockerfile
+    ports: ["8086:8086"]
+    environment:
+      <<: *common-env
+      QUANTUM_ATTACK_PORT: "8086"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-zero-trust:
+    build:
+      context: ./quantum/quantum-zero-trust
+      dockerfile: Dockerfile
+    ports: ["8087:8087"]
+    environment:
+      <<: *common-env
+      QUANTUM_ZT_PORT: "8087"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-dashboard-api:
+    build:
+      context: ./quantum/dashboard
+      dockerfile: Dockerfile
+    ports: ["8088:8088"]
+    environment:
+      <<: *common-env
+      QUANTUM_DASHBOARD_PORT: "8088"
+    depends_on: [kafka, timescaledb, neo4j, prometheus, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
 volumes:
   prediction-models:
   postgres-data:

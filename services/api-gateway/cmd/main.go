@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"encoding/base64"
@@ -409,6 +410,72 @@ func JWTAuthMiddleware(next http.Handler) http.Handler {
 
 		// Inject claims into context
 		ctx := context.WithValue(r.Context(), "jwt_claims", claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// ── Quantum Zero Trust Middleware ─────────────────────────
+
+func QuantumZeroTrustMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Example extraction of Quantum verification headers
+		identSig := r.Header.Get("X-Quantum-Identity-Signature")
+		entropy := r.Header.Get("X-Quantum-Challenge-Entropy")
+		respSig := r.Header.Get("X-Quantum-Response-Signature")
+
+		if identSig == "" && r.Header.Get("Authorization") != "" {
+			// Fallback to classical JWT if no quantum signature but Auth header is present
+			JWTAuthMiddleware(next).ServeHTTP(w, r)
+			return
+		}
+
+		if identSig == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing quantum identity signature"})
+			return
+		}
+
+		// Perform simulated out-of-band call to quantum-zero-trust service
+		client := http.Client{Timeout: 3 * time.Second}
+		reqBody, _ := json.Marshal(map[string]interface{}{
+			"subject_id":           "user-requested",
+			"resource_id":          r.URL.Path,
+			"identity_signature":   identSig,
+			"challenge_entropy":    entropy,
+			"response_signature":   respSig,
+			"dna_fingerprint":      r.Header.Get("X-Security-DNA"),
+		})
+
+		req, err := http.NewRequest("POST", "http://quantum-zero-trust:8087/quantum/zerotrust/verify", bytes.NewBuffer(reqBody))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "quantum zero trust engine unreachable"})
+			return
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		
+		if err != nil || resp.StatusCode != 200 {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "quantum zero trust verification failed"})
+			return
+		}
+		defer resp.Body.Close()
+
+		var ztResult map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&ztResult); err != nil {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid zero trust response"})
+			return
+		}
+
+		if decision, ok := ztResult["decision"].(string); !ok || decision != "allow" {
+			writeJSON(w, http.StatusForbidden, map[string]interface{}{
+				"error": "quantum zero trust denied access",
+				"trust_score": ztResult["trust_score"],
+			})
+			return
+		}
+
+		// Access Allowed
+		ctx := context.WithValue(r.Context(), "quantum_trust_score", ztResult["trust_score"])
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -837,7 +904,7 @@ func main() {
 
 	// ── Protected API Routes ──
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(JWTAuthMiddleware)
+		r.Use(QuantumZeroTrustMiddleware)
 		r.Use(AuthorizationMiddleware)
 
 		// Threat Detection & Metrics
