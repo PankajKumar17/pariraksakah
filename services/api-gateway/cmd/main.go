@@ -316,6 +316,8 @@ var services = map[string]ServiceConfig{
 	"cognitive-firewall": {Name: "cognitive-firewall", URL: env("COGNITIVE_FIREWALL_URL", "http://cognitive-firewall:8007")},
 	"self-healing":       {Name: "self-healing", URL: env("SELF_HEALING_URL", "http://self-healing:8008")},
 	"satellite-link":     {Name: "satellite-link", URL: env("SATELLITE_LINK_URL", "http://satellite-link:8009")},
+	"neuro-snn-engine":   {Name: "neuro-snn-engine", URL: env("NEURO_SNN_URL", "http://neuro-snn-engine:8070")},
+	"neuro-immune":       {Name: "neuro-immune", URL: env("NEURO_IMMUNE_URL", "http://neuro-adaptive-immune:8075")},
 }
 
 func env(key, fallback string) string {
@@ -591,6 +593,72 @@ func JWTAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// ── Quantum Zero Trust Middleware ─────────────────────────
+
+func QuantumZeroTrustMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Example extraction of Quantum verification headers
+		identSig := r.Header.Get("X-Quantum-Identity-Signature")
+		entropy := r.Header.Get("X-Quantum-Challenge-Entropy")
+		respSig := r.Header.Get("X-Quantum-Response-Signature")
+
+		if identSig == "" && r.Header.Get("Authorization") != "" {
+			// Fallback to classical JWT if no quantum signature but Auth header is present
+			JWTAuthMiddleware(next).ServeHTTP(w, r)
+			return
+		}
+
+		if identSig == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing quantum identity signature"})
+			return
+		}
+
+		// Perform simulated out-of-band call to quantum-zero-trust service
+		client := http.Client{Timeout: 3 * time.Second}
+		reqBody, _ := json.Marshal(map[string]interface{}{
+			"subject_id":           "user-requested",
+			"resource_id":          r.URL.Path,
+			"identity_signature":   identSig,
+			"challenge_entropy":    entropy,
+			"response_signature":   respSig,
+			"dna_fingerprint":      r.Header.Get("X-Security-DNA"),
+		})
+
+		req, err := http.NewRequest("POST", "http://quantum-zero-trust:8087/quantum/zerotrust/verify", bytes.NewBuffer(reqBody))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "quantum zero trust engine unreachable"})
+			return
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		
+		if err != nil || resp.StatusCode != 200 {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "quantum zero trust verification failed"})
+			return
+		}
+		defer resp.Body.Close()
+
+		var ztResult map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&ztResult); err != nil {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid zero trust response"})
+			return
+		}
+
+		if decision, ok := ztResult["decision"].(string); !ok || decision != "allow" {
+			writeJSON(w, http.StatusForbidden, map[string]interface{}{
+				"error": "quantum zero trust denied access",
+				"trust_score": ztResult["trust_score"],
+			})
+			return
+		}
+
+		// Access Allowed
+		ctx := context.WithValue(r.Context(), "quantum_trust_score", ztResult["trust_score"])
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func validateJWT(tokenStr string) (*jwt.Token, error) {
 	return jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -744,6 +812,71 @@ func MetricsMiddleware(next http.Handler) http.Handler {
 
 		httpRequestsTotal.WithLabelValues(r.Method, path, fmt.Sprintf("%d", ww.Status())).Inc()
 		httpRequestDuration.WithLabelValues(r.Method, path).Observe(duration)
+	})
+}
+
+// ── Neuromorphic Middleware ────────────────────────
+
+var (
+	neuroImmuneCache   map[string]string
+	neuroImmuneCacheMu sync.RWMutex
+)
+
+func init() {
+	neuroImmuneCache = make(map[string]string)
+	go func() {
+		for {
+			func() {
+				client := http.Client{Timeout: 2 * time.Second}
+				resp, err := client.Get("http://neuro-adaptive-immune:8075/immune/antibodies")
+				if err == nil && resp.StatusCode == 200 {
+					var rules map[string]string
+					if err := json.NewDecoder(resp.Body).Decode(&rules); err == nil {
+						neuroImmuneCacheMu.Lock()
+						neuroImmuneCache = rules
+						neuroImmuneCacheMu.Unlock()
+					}
+					resp.Body.Close()
+				}
+			}()
+			time.Sleep(10 * time.Second)
+		}
+	}()
+}
+
+func NeuromorphicMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := r.RemoteAddr
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			clientIP = strings.Split(xff, ",")[0]
+		}
+		
+		neuroImmuneCacheMu.RLock()
+		action, exists := neuroImmuneCache[clientIP]
+		neuroImmuneCacheMu.RUnlock()
+
+		if exists && action == "DROP" {
+			log.Printf("[IMMUNE-BLOCK] IP %s blocked by neuromorphic antibody", clientIP)
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "blocked by adaptive immune system"})
+			return
+		}
+
+		go func(path, method, ip string) {
+			payload := map[string]interface{}{
+				"event_type": "api_request",
+				"severity":   1,
+				"context": map[string]string{
+					"path":   path,
+					"method": method,
+					"ip":     ip,
+				},
+			}
+			body, _ := json.Marshal(payload)
+			client := http.Client{Timeout: 2 * time.Second}
+			client.Post("http://neuro-snn-engine:8070/snn/input", "application/json", strings.NewReader(string(body)))
+		}(r.URL.Path, r.Method, clientIP)
+
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -931,6 +1064,7 @@ func main() {
 	r.Use(middleware.Compress(5))
 	r.Use(MetricsMiddleware)
 	r.Use(RateLimitMiddleware(rateLimiter))
+	r.Use(NeuromorphicMiddleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "https://*.cybershield-x.io"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
@@ -947,6 +1081,16 @@ func main() {
 			"service": "api-gateway",
 			"version": "1.0.0",
 			"time":    time.Now().UTC().Format(time.RFC3339),
+		})
+	})
+
+	r.Get("/neuro/status", func(w http.ResponseWriter, r *http.Request) {
+		neuroImmuneCacheMu.RLock()
+		cacheSize := len(neuroImmuneCache)
+		neuroImmuneCacheMu.RUnlock()
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status": "Neuromorphic AI Gateway Integration Active",
+			"immune_cache_size": cacheSize,
 		})
 	})
 
@@ -1009,7 +1153,7 @@ func main() {
 
 	// ── Protected API Routes ──
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(JWTAuthMiddleware)
+		r.Use(QuantumZeroTrustMiddleware)
 		r.Use(AuthorizationMiddleware)
 
 		r.Route("/auth", func(r chi.Router) {

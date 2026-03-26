@@ -4,6 +4,8 @@ import Dashboard from './pages/Dashboard';
 import ThreatHunting from './pages/ThreatHunting';
 import Innovations from './pages/Innovations';
 import IncidentResponse from './pages/IncidentResponse';
+import NeuromorphicBrain from './pages/NeuromorphicBrain';
+import QuantumSecurity from './pages/QuantumSecurity';
 import { useAppStore } from './store/useAppStore';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -13,6 +15,8 @@ const navItems = [
   { path: '/threat-hunting' as const, label: 'Threat Hunting' },
   { path: '/innovations' as const, label: 'Innovations' },
   { path: '/incidents' as const, label: 'Incidents' },
+  { path: '/neuromorphic' as const, label: 'Neuromorphic Brain' },
+  { path: '/quantum' as const, label: 'Quantum Security' },
 ];
 
 export default function App() {
@@ -228,6 +232,8 @@ export default function App() {
             <Route path="/threat-hunting" element={isAuthed ? <ThreatHunting /> : <Navigate to="/blocked" replace />} />
             <Route path="/innovations" element={isAuthed ? <Innovations /> : <Navigate to="/blocked" replace />} />
             <Route path="/incidents" element={isAuthed ? <IncidentResponse authToken={authToken} /> : <Navigate to="/blocked" replace />} />
+            <Route path="/neuromorphic" element={isAuthed ? <NeuromorphicBrain /> : <Navigate to="/blocked" replace />} />
+            <Route path="/quantum" element={isAuthed ? <QuantumSecurity /> : <Navigate to="/blocked" replace />} />
             <Route path="/blocked" element={<div className="text-sm text-slate-600">Please login from the landing page.</div>} />
           </Routes>
         </main>

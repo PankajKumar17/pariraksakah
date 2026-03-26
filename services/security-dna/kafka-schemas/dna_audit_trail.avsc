@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "AuditTrail",
+  "namespace": "com.cybershield.dna",
+  "fields": [
+    {"name": "audit_id", "type": "string"},
+    {"name": "action", "type": "string"},
+    {"name": "component_id", "type": "string"},
+    {"name": "actor", "type": "string"},
+    {"name": "timestamp", "type": "string"},
+    {"name": "outcome", "type": "string"},
+    {"name": "signature", "type": "string"}
+  ]
+}

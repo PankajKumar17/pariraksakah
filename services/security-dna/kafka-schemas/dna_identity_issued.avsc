@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "IdentityIssued",
+  "namespace": "com.cybershield.dna",
+  "fields": [
+    {"name": "component_id", "type": "string"},
+    {"name": "component_name", "type": "string"},
+    {"name": "component_type", "type": "string"},
+    {"name": "dna_fingerprint", "type": "string"},
+    {"name": "certificate_serial", "type": "string"},
+    {"name": "public_key", "type": "string"},
+    {"name": "issued_at", "type": "string"},
+    {"name": "expires_at", "type": "string"},
+    {"name": "trust_score", "type": "double"}
+  ]
+}

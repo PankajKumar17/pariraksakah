@@ -382,6 +382,406 @@ services:
     restart: unless-stopped
     networks: [cybershield-net]
 
+  # ─── Security DNA Cryptographic System Identity Platform ─────
+  dna-identity-engine:
+    build:
+      context: ./services/security-dna/identity-engine
+      dockerfile: Dockerfile
+    ports: ["8050:8050"]
+    environment:
+      <<: *common-env
+      DNA_PORT: "8050"
+    depends_on: [kafka, timescaledb]
+    restart: unless-stopped
+    networks: [cybershield-net]
+    privileged: true # required for hardware / proc reading
+    pid: "host"
+
+  dna-certificate-authority:
+    build:
+      context: ./services/security-dna/certificate-authority
+      dockerfile: Dockerfile
+    ports: ["8051:8051"]
+    environment:
+      <<: *common-env
+      CA_PORT: "8051"
+    depends_on: [timescaledb, kafka]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-fingerprint-monitor:
+    build:
+      context: ./services/security-dna/fingerprint-monitor
+      dockerfile: Dockerfile
+    ports: ["8052:8052"]
+    environment:
+      <<: *common-env
+      MONITOR_PORT: "8052"
+    depends_on: [timescaledb, neo4j, kafka]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-trust-registry:
+    build:
+      context: ./services/security-dna/trust-registry
+      dockerfile: Dockerfile
+    ports: ["8053:8053"]
+    environment:
+      <<: *common-env
+      TRUST_PORT: "8053"
+    depends_on: [timescaledb, neo4j, kafka]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-anomaly-detector:
+    build:
+      context: ./services/security-dna/anomaly-detector
+      dockerfile: Dockerfile
+    ports: ["8054:8054"]
+    environment:
+      <<: *common-env
+      ANOMALY_PORT: "8054"
+    depends_on: [kafka, timescaledb, neo4j]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-dashboard-api:
+    build:
+      context: ./services/security-dna/dashboard-api
+      dockerfile: Dockerfile
+    ports: ["8055:8055"]
+    environment:
+      <<: *common-env
+      DASHBOARD_API_PORT: "8055"
+    depends_on: [timescaledb, neo4j]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  # ─── Decentralized Security Response Network (DSRN) ─────────
+  dsrn-peer-node:
+    build:
+      context: ./services/dsrn/peer-node
+      dockerfile: Dockerfile
+    ports: ["8060:8060", "4001:4001"]
+    environment:
+      <<: *common-env
+      DSRN_PEER_PORT: "8060"
+      DSRN_P2P_PORT: "4001"
+      DSRN_MODE: ${DSRN_MODE:-development}
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dsrn-consensus-engine:
+    build:
+      context: ./services/dsrn/consensus-engine
+      dockerfile: Dockerfile
+    ports: ["8061:8061"]
+    environment:
+      <<: *common-env
+      CONSENSUS_PORT: "8061"
+      PBFT_MIN_PEERS: "4"
+      PBFT_TIMEOUT_SECS: "30"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dsrn-threat-gossip:
+    build:
+      context: ./services/dsrn/threat-gossip
+      dockerfile: Dockerfile
+    ports: ["8062:8062"]
+    environment:
+      <<: *common-env
+      GOSSIP_PORT: "8062"
+      GOSSIP_FANOUT: "3"
+      GOSSIP_INTERVAL_SECS: "15"
+      GOSSIP_MAX_HOPS: "10"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dsrn-response-coordinator:
+    build:
+      context: ./services/dsrn/response-coordinator
+      dockerfile: Dockerfile
+    ports: ["8063:8063"]
+    environment:
+      <<: *common-env
+      RESPONSE_PORT: "8063"
+    depends_on: [kafka, timescaledb, neo4j]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dsrn-peer-trust-manager:
+    build:
+      context: ./services/dsrn/peer-trust-manager
+      dockerfile: Dockerfile
+    ports: ["8064:8064"]
+    environment:
+      <<: *common-env
+      TRUST_MANAGER_PORT: "8064"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dsrn-blockchain-ledger:
+    build:
+      context: ./services/dsrn/blockchain-ledger
+      dockerfile: Dockerfile
+    ports: ["8065:8065"]
+    environment:
+      <<: *common-env
+      LEDGER_PORT: "8065"
+    depends_on: [kafka, timescaledb]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dsrn-network-monitor:
+    build:
+      context: ./services/dsrn/network-monitor
+      dockerfile: Dockerfile
+    ports: ["8066:8066"]
+    environment:
+      <<: *common-env
+      MONITOR_PORT: "8066"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dsrn-dashboard-api:
+    build:
+      context: ./services/dsrn/dashboard-api
+      dockerfile: Dockerfile
+    ports: ["8067:8067"]
+    environment:
+      <<: *common-env
+      DSRN_DASHBOARD_PORT: "8067"
+    depends_on: [timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  # ─── Neuromorphic Computing AI Security System ─────────
+  neuro-snn-engine:
+    build:
+      context: ./services/neuro-snn-engine
+      dockerfile: Dockerfile
+    ports: ["8070:8070"]
+    environment:
+      <<: *common-env
+      NEURO_SNN_PORT: "8070"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-synaptic-memory:
+    build:
+      context: ./services/neuro-synaptic-memory
+      dockerfile: Dockerfile
+    ports: ["8071:8071"]
+    environment:
+      <<: *common-env
+      NEURO_SYNAPTIC_PORT: "8071"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-plasticity-manager:
+    build:
+      context: ./services/neuro-plasticity-manager
+      dockerfile: Dockerfile
+    ports: ["8072:8072"]
+    environment:
+      <<: *common-env
+      NEURO_PLASTICITY_PORT: "8072"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-anomaly-cortex:
+    build:
+      context: ./services/neuro-anomaly-cortex
+      dockerfile: Dockerfile
+    ports: ["8073:8073"]
+    environment:
+      <<: *common-env
+      NEURO_CORTEX_PORT: "8073"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on: [kafka, timescaledb, mlflow]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-threat-hippocampus:
+    build:
+      context: ./services/neuro-threat-hippocampus
+      dockerfile: Dockerfile
+    ports: ["8074:8074"]
+    environment:
+      <<: *common-env
+      NEURO_HIPPOCAMPUS_PORT: "8074"
+    depends_on: [kafka, timescaledb, neo4j]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-adaptive-immune:
+    build:
+      context: ./services/neuro-adaptive-immune
+      dockerfile: Dockerfile
+    ports: ["8075:8075"]
+    environment:
+      <<: *common-env
+      NEURO_IMMUNE_PORT: "8075"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-dream-consolidator:
+    build:
+      context: ./services/neuro-dream-consolidator
+      dockerfile: Dockerfile
+    ports: ["8076:8076"]
+    environment:
+      <<: *common-env
+      NEURO_DREAM_PORT: "8076"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-evolution-system:
+    build:
+      context: ./services/neuro-evolution-system
+      dockerfile: Dockerfile
+    ports: ["8077:8077"]
+    environment:
+      <<: *common-env
+      NEURO_EVOLUTION_PORT: "8077"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on: [kafka, timescaledb, mlflow]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  neuro-dashboard-api:
+    build:
+      context: ./services/neuro-dashboard-api
+      dockerfile: Dockerfile
+    ports: ["8078:8078"]
+    environment:
+      <<: *common-env
+      NEURO_DASHBOARD_PORT: "8078"
+    depends_on: [kafka, timescaledb, neo4j, prometheus]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  # ─── Quantum Security Suite ─────────────────────
+  quantum-crypto-engine:
+    build:
+      context: ./quantum/quantum-safe-crypto
+      dockerfile: Dockerfile
+    ports: ["8080:8080"]
+    environment:
+      <<: *common-env
+      QUANTUM_CRYPTO_PORT: "8080"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-qkd-simulator:
+    build:
+      context: ./quantum/quantum-key-distribution
+      dockerfile: Dockerfile
+    ports: ["8081:8081"]
+    environment:
+      <<: *common-env
+      QUANTUM_QKD_PORT: "8081"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-rng-service:
+    build:
+      context: ./quantum/quantum-random-number
+      dockerfile: Dockerfile
+    ports: ["8082:8082"]
+    environment:
+      <<: *common-env
+      QUANTUM_RNG_PORT: "8082"
+    depends_on: [kafka, timescaledb, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-threat-detector:
+    build:
+      context: ./quantum/quantum-threat-detection
+      dockerfile: Dockerfile
+    ports: ["8083:8083"]
+    environment:
+      <<: *common-env
+      QUANTUM_THREAT_PORT: "8083"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-ml-anomaly:
+    build:
+      context: ./quantum/quantum-ml-anomaly
+      dockerfile: Dockerfile
+    ports: ["8084:8084"]
+    environment:
+      <<: *common-env
+      QUANTUM_ML_PORT: "8084"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on: [kafka, timescaledb, mlflow, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-supply-chain:
+    build:
+      context: ./quantum/quantum-supply-chain
+      dockerfile: Dockerfile
+    ports: ["8085:8085"]
+    environment:
+      <<: *common-env
+      QUANTUM_SUPPLY_PORT: "8085"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-attack-simulator:
+    build:
+      context: ./quantum/quantum-attack-simulation
+      dockerfile: Dockerfile
+    ports: ["8086:8086"]
+    environment:
+      <<: *common-env
+      QUANTUM_ATTACK_PORT: "8086"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-zero-trust:
+    build:
+      context: ./quantum/quantum-zero-trust
+      dockerfile: Dockerfile
+    ports: ["8087:8087"]
+    environment:
+      <<: *common-env
+      QUANTUM_ZT_PORT: "8087"
+    depends_on: [kafka, timescaledb, neo4j, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  quantum-dashboard-api:
+    build:
+      context: ./quantum/dashboard
+      dockerfile: Dockerfile
+    ports: ["8088:8088"]
+    environment:
+      <<: *common-env
+      QUANTUM_DASHBOARD_PORT: "8088"
+    depends_on: [kafka, timescaledb, neo4j, prometheus, redis]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
 volumes:
   prediction-models:
   postgres-data:

@@ -1,0 +1,27 @@
+[package]
+name = "dna_identity_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+blake3 = "1.3"
+pqcrypto-dilithium = "0.4.7"
+pqcrypto-traits = "0.3.4"
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = "0.7"
+deadpool-postgres = "0.10"
+rdkafka = "0.36"
+avro-rs = "0.13"
+sysinfo = "0.29"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+env_logger = "0.10"
+log = "0.4"
+lazy_static = "1.4"
+bytes = "1.4"
+
+[profile.release]
+opt-level = 3
