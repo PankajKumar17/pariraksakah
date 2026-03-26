@@ -15,6 +15,7 @@ from pydantic import BaseModel
 import sys, os as _os
 _os.path.insert(0, _os.path.dirname(_os.path.abspath(__file__))) if _os.path.dirname(_os.path.abspath(__file__)) not in sys.path else None
 from ingestion.pcap_sniffer import SnifferManager
+from ingestion.log_collector import LogCollectorManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("threat-detection")
@@ -44,6 +45,11 @@ _stats = {"events_processed": 0, "threats_detected": 0, "false_positives_suppres
 
 _sniffer_manager = SnifferManager()
 _ws_clients: Set[WebSocket] = set()
+
+# ── Log Aggregation ──────────────────────────────
+
+_log_manager = LogCollectorManager()
+_log_ws_clients: Set[WebSocket] = set()
 
 # ── Known IOC / suspicious ports / MITRE mapping ─
 
@@ -83,6 +89,14 @@ class UserBehaviorEvent(BaseModel):
     hour_of_day: int = 9
     day_of_week: int = 1
     failed_attempts: int = 0
+
+class LogEvent(BaseModel):
+    timestamp: Optional[str] = None
+    hostname: str = "unknown"
+    app_name: str = "unknown"
+    severity: str = "INFO"
+    message: str
+    raw: Optional[str] = None
 
 class BatchEventRequest(BaseModel):
     events: List[NetworkEvent]
@@ -221,6 +235,47 @@ def _classify_user_behavior(ev: UserBehaviorEvent) -> dict:
         "resource": ev.resource,
     }
 
+def _classify_log_event(ev: LogEvent) -> dict:
+    """Analyze a single log entry for common threats."""
+    threats = []
+    score = 0.0
+    msg_lower = ev.message.lower()
+
+    if "failed password" in msg_lower or "invalid user" in msg_lower or "multiple failed login attempts" in msg_lower:
+        threats.append("brute_force")
+        score += 0.4
+
+    if "sqlmap" in msg_lower or "1=1" in msg_lower or "select " in msg_lower and " union " in msg_lower:
+        threats.append("sqli")
+        score += 0.7
+
+    if "denied untrusted exec" in msg_lower or "rootkit" in msg_lower:
+        threats.append("privilege_escalation")
+        score += 0.8
+
+    if ev.severity == "CRITICAL" and not threats:
+        score += 0.3
+
+    score = min(score, 1.0)
+
+    if score >= 0.7:
+        severity = "CRITICAL"
+    elif score >= 0.4:
+        severity = "HIGH"
+    elif score >= 0.2:
+        severity = "MEDIUM"
+    else:
+        severity = "LOW"
+        threats = []
+        score = 0.0
+
+    return {
+        "is_threat": score >= 0.2,
+        "severity": severity,
+        "score": round(score, 4),
+        "techniques_detected": threats,
+    }
+
 # ── Endpoints ─────────────────────────────────────
 
 @app.get("/health")
@@ -322,6 +377,59 @@ async def capture_status():
     return _sniffer_manager.status()
 
 
+# ── Log Aggregation Endpoints ─────────────────────
+
+@app.post("/logs/ingest")
+async def ingest_log(ev: LogEvent):
+    """Ingest a single structured log event manually via HTTP."""
+    _log_manager.push_http_event(ev.dict())
+    return {"status": "accepted"}
+
+@app.get("/logs/status")
+async def log_status():
+    return _log_manager.status()
+
+@app.websocket("/ws/live-logs")
+async def websocket_live_logs(ws: WebSocket):
+    """Stream analyzed logs to clients."""
+    await ws.accept()
+    _log_ws_clients.add(ws)
+    try:
+        while True:
+            await asyncio.sleep(30)
+            await ws.send_json({"type": "ping"})
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        _log_ws_clients.discard(ws)
+
+
+async def _log_pipeline():
+    """Consume logs, analyze via ATDE, and stream to clients."""
+    logger.info("[Logs] Pipeline started")
+    while _log_manager._running:
+        event = await _log_manager.get_event(timeout=0.1)
+        if event is None:
+            continue
+        
+        le = LogEvent(**event)
+        result = _classify_log_event(le)
+        
+        # Merge result into original event
+        out = {**event, "threat_analysis": result}
+        
+        # Broadcast
+        dead: set = set()
+        for ws in _log_ws_clients.copy():
+            try:
+                await ws.send_json(out)
+            except Exception:
+                dead.add(ws)
+        _log_ws_clients.difference_update(dead)
+
+    logger.info("[Logs] Pipeline stopped")
+
+
 @app.websocket("/ws/live-alerts")
 async def websocket_live_alerts(ws: WebSocket):
     """Stream real-time threat alerts to WebSocket clients."""
@@ -409,10 +517,14 @@ async def startup_event():
     logger.info("KAFKA_BOOTSTRAP_SERVERS=%s", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
     logger.info("Threat Detection Engine ready — statistical + rule-based detection active")
     logger.info("Live capture: POST /capture/start | WebSocket: ws://host/ws/live-alerts")
+    # Start the log collector
+    await _log_manager.start()
+    asyncio.ensure_future(_log_pipeline())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     _sniffer_manager.stop()
+    await _log_manager.stop()
     logger.info("Threat Detection Engine shutting down...")
 

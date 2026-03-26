@@ -8,6 +8,7 @@ import NeuromorphicBrain from './pages/NeuromorphicBrain';
 import QuantumSecurity from './pages/QuantumSecurity';
 import SIEMDashboard from './pages/SIEMDashboard';
 import LiveCapture from './pages/LiveCapture';
+import LogAggregation from './pages/LogAggregation';
 import { useAppStore } from './store/useAppStore';
 
 const navItems = [
@@ -19,6 +20,7 @@ const navItems = [
   { path: '/quantum' as const, label: 'Quantum Security' },
   { path: '/siem' as const, label: '📡 SIEM' },
   { path: '/live-capture' as const, label: '🎯 Live Capture' },
+  { path: '/logs' as const, label: '📑 Log Aggregation' },
 ];
 
 export default function App() {
@@ -70,6 +72,7 @@ export default function App() {
             <Route path="/quantum" element={<QuantumSecurity />} />
             <Route path="/siem" element={<SIEMDashboard />} />
             <Route path="/live-capture" element={<LiveCapture />} />
+            <Route path="/logs" element={<LogAggregation />} />
           </Routes>
         </main>
       </div>
