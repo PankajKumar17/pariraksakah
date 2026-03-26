@@ -116,6 +116,138 @@ curl https://sh.rustup.rs -sSf | sh -s -- -y
 rustup default stable
 ```
 
+## Share With A Friend: Fresh Machine Setup + Seed Data
+
+Use this when someone else wants to run the full stack quickly and see non-empty dashboards.
+
+### 1. Prerequisites
+
+- Docker Desktop (with Docker Compose v2)
+- Node.js 20+ (for running the event feeder script)
+- Git
+
+### 2. Clone and start all services
+
+```bash
+git clone https://github.com/PankajKumar17/pariraksakah.git
+cd pariraksakah
+docker compose up -d --build
+```
+
+### 3. Verify core endpoints
+
+Open these URLs in browser:
+
+- Dashboard: http://localhost:3000
+- API Gateway health: http://localhost:8080/health
+- Gateway readiness: http://localhost:8080/ready
+
+### 4. Login credentials
+
+Default local users from access-control service:
+
+- admin / admin123
+- analyst / analyst123
+- viewer / viewer123
+
+### 5. Seed demo threat data (one-time)
+
+From repository root:
+
+```bash
+node scripts/live_event_feeder.js --once
+```
+
+This sends a burst of threat events through the gateway so charts and alert lists populate.
+
+### 6. Keep data flowing live (optional)
+
+Run in a second terminal:
+
+```bash
+node scripts/live_event_feeder.js
+```
+
+Optional tuning:
+
+- `API_BASE` (default `http://localhost:8080`)
+- `DEMO_USER` / `DEMO_PASS` (default `admin` / `admin123`)
+- `FEED_INTERVAL_MS` (default `8000`)
+
+Example:
+
+```bash
+API_BASE=http://localhost:8080 FEED_INTERVAL_MS=3000 node scripts/live_event_feeder.js
+```
+
+### 7. If the frontend page is stale
+
+```bash
+docker compose restart frontend
+```
+
+If needed, restart gateway too:
+
+```bash
+docker compose restart api-gateway
+```
+
+### 8. Stop everything
+
+```bash
+docker compose down
+```
+
+## Hackathon Demo Flow
+
+Use this flow when presenting to judges so the strongest end-to-end stories are one click away.
+
+### 1. Start the full stack
+
+```bash
+docker compose up -d --build
+```
+
+### 2. Open the platform
+
+- Dashboard: http://localhost:3000
+- Gateway health: http://localhost:8080/health
+- Gateway readiness: http://localhost:8080/ready
+
+### 3. Sign in with a demo user
+
+- `admin / admin123`
+- `analyst / analyst123`
+
+### 4. Use the Dashboard Demo Console
+
+From the main dashboard, launch the three built-in demo stories:
+
+- `Launch Threat Wave`
+- `Run Phishing Scenario`
+- `Trigger Incident Response`
+
+These orchestrate the existing backend services and refresh the dashboard automatically so the live panels react without extra terminal steps.
+
+### 5. Optional background feed
+
+If you want the alert stream to continue between judge conversations:
+
+```bash
+node scripts/live_event_feeder.js
+```
+
+### 6. Suggested pitch order
+
+1. Dashboard overview and service health
+2. Threat Wave for live alerts and MITRE coverage
+3. Phishing Scenario for social-engineering defense
+4. Incident Response for automated remediation
+5. Innovations page for the broader platform vision
+
+For a judge-ready checklist and short presentation script, see [HACKATHON_RUNBOOK.md](./HACKATHON_RUNBOOK.md).
+
+
 ## License
 
 Proprietary — All rights reserved.

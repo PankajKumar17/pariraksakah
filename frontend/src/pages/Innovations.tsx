@@ -171,6 +171,11 @@ export default function Innovations() {
 
   const activeCount = items.filter((i) => i.status === 'active').length;
   const degradedCount = items.filter((i) => i.status === 'degraded').length;
+  const featuredInnovation = useMemo(
+    () => items.find((item) => item.id === 'bio') ?? items[0],
+    [items],
+  );
+  const supportingInnovationCount = Math.max(items.length - 1, 0);
 
   return (
     <div className="space-y-6">
@@ -187,6 +192,56 @@ export default function Innovations() {
           {degradedCount > 0 && (
             <span className="badge badge-medium">{degradedCount} Degraded</span>
           )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
+        <div className="card border-[#517EF9]/30 bg-[linear-gradient(135deg,rgba(81,126,249,0.08),rgba(255,255,255,0.96))]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="badge badge-low">Innovation Layer</span>
+            <span className="badge bg-slate-900/5 text-slate-600">Position as platform differentiators</span>
+          </div>
+          <h2 className="mt-3 text-xl font-bold text-slate-900">Use this page as the closing vision, not the opening proof</h2>
+          <p className="mt-2 max-w-3xl text-sm text-slate-600">
+            The hackathon core demo lives on the dashboard, phishing flow, and incident response. This
+            page should help judges understand the broader roadmap behind the platform by showing the
+            innovation modules as active supporting systems.
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-[#DFE8FA] bg-white/90 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Pitch cue</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">"These modules extend the same defense graph."</div>
+            </div>
+            <div className="rounded-xl border border-[#DFE8FA] bg-white/90 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Show one deeply</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">Bio-auth trust score is the cleanest callout</div>
+            </div>
+            <div className="rounded-xl border border-[#DFE8FA] bg-white/90 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Supporting modules</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">{supportingInnovationCount} additional systems reinforce the story</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">Featured Judge Callout</div>
+          <h3 className="text-lg font-semibold text-slate-900">{featuredInnovation.name}</h3>
+          <p className="mt-2 text-sm text-slate-600">{featuredInnovation.description}</p>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {featuredInnovation.metrics.slice(0, 4).map((metric) => (
+              <div
+                key={metric.label}
+                className="rounded-lg border border-[#DFE8FA] bg-[#F2F6FF] px-3 py-2"
+              >
+                <div className="text-lg font-bold text-[#517EF9]">{metric.value}</div>
+                <div className="text-xs text-slate-500">{metric.label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+            Suggested line: continuous operator trust scoring reduces the chance that a compromised
+            analyst workstation becomes the next breach pivot.
+          </div>
         </div>
       </div>
 

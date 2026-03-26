@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -55,15 +55,19 @@ function generateMockGraph(): { nodes: ThreatNode[]; edges: ThreatEdge[] } {
 }
 
 function generateTimeline() {
-  const now = Date.now();
-  return Array.from({ length: 48 }, (_, i) => ({
-    time: new Date(now - (47 - i) * 1800_000).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-    threats: Math.floor(Math.random() * 15) + 1,
-    anomalies: Math.floor(Math.random() * 8),
-  }));
+  const now = new Date('2026-03-26T18:00:00');
+  return Array.from({ length: 48 }, (_, i) => {
+    const baseline = 4 + (i % 5);
+    const surge = i > 28 && i < 39 ? 7 : i > 39 ? 4 : 0;
+    return {
+      time: new Date(now.getTime() - (47 - i) * 1800_000).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      threats: baseline + surge,
+      anomalies: Math.max(0, Math.floor((baseline + surge) / 2) - 1),
+    };
+  });
 }
 
 // ── Node Colors ────────────────────────────────
@@ -81,7 +85,7 @@ const NODE_COLORS: Record<string, string> = {
 export default function ThreatHunting() {
   const [searchQuery, setSearchQuery] = useState('');
   const graph = useMemo(() => generateMockGraph(), []);
-  const [selectedNode, setSelectedNode] = useState<ThreatNode | null>(() => generateMockGraph().nodes[0]);
+  const [selectedNode, setSelectedNode] = useState<ThreatNode | null>(() => graph.nodes[0]);
   const timeline = useMemo(() => generateTimeline(), []);
 
   const filteredNodes = useMemo(() => {
@@ -94,6 +98,39 @@ export default function ThreatHunting() {
 
   return (
     <div className="space-y-6">
+      <div className="card border-[#517EF9]/30 bg-[linear-gradient(135deg,rgba(81,126,249,0.08),rgba(255,255,255,0.96))]">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="badge badge-low">Guided Analyst Workspace</span>
+              <span className="badge bg-slate-900/5 text-slate-600">Demo-assisted hunt view</span>
+            </div>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Threat Hunting Narrative Layer</h1>
+              <p className="mt-2 max-w-3xl text-sm text-slate-600">
+                This page is tuned for hackathon storytelling: it blends a curated campaign graph with
+                deterministic activity patterns so you can explain attacker movement right after running
+                the dashboard&apos;s <span className="font-semibold text-slate-800">Threat Wave</span> scenario.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:w-[28rem]">
+            <div className="rounded-xl border border-[#DFE8FA] bg-white/90 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Best Moment</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">After Threat Wave</div>
+            </div>
+            <div className="rounded-xl border border-[#DFE8FA] bg-white/90 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Tell Judges</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">Campaign, MITRE, lateral movement</div>
+            </div>
+            <div className="rounded-xl border border-[#DFE8FA] bg-white/90 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">UI Goal</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">Explain the live alerts, not replace them</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Search Bar */}
       <div className="card">
         <div className="flex items-center gap-4">
@@ -283,6 +320,10 @@ export default function ThreatHunting() {
                       </div>
                     );
                   })}
+              </div>
+              <div className="rounded-lg border border-[#DFE8FA] bg-[#F7FAFF] px-3 py-3 text-xs text-slate-600">
+                Narration cue: explain how this entity links the dashboard alert feed to a broader campaign
+                path across infrastructure, access, and ransomware stages.
               </div>
             </div>
           ) : (

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"crypto/tls"
@@ -184,6 +185,12 @@ func initPolicies() {
 			Effect:   Allow,
 			Roles:    []string{"admin", "analyst", "responder", "viewer"},
 		},
+		{
+			Resource: "/demo",
+			Action:   ActionWrite,
+			Effect:   Allow,
+			Roles:    []string{"admin", "analyst", "responder", "viewer"},
+		},
 	}
 }
 
@@ -221,6 +228,11 @@ func matchesAction(method string) PolicyAction {
 func isAuthorized(ctx *AuthContext, resource string, action PolicyAction) bool {
 	if ctx == nil || ctx.Role == "" {
 		return false
+	}
+
+	// Admin is super-user: allow all resources/actions under protected routes.
+	if strings.EqualFold(ctx.Role, "admin") {
+		return true
 	}
 
 	policyMu.RLock()
@@ -441,6 +453,7 @@ type rolloutModeUpdateRequest struct {
 
 func getAlertsRolloutStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"mode":                       currentAlertsMode(),
 		"alerts_mode":                currentAlertsMode(),
 		"deploy_env":                 deployEnv,
 		"synthetic_fallback_allowed": allowSyntheticFallback,
@@ -480,6 +493,7 @@ func updateAlertsRolloutMode(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":      "ok",
+		"mode":        newMode,
 		"alerts_mode": newMode,
 		"previous":    prev,
 		"deploy_env":  deployEnv,
@@ -1058,6 +1072,13 @@ func main() {
 
 		// Innovations status (aggregated)
 		r.Get("/innovations/status", innovationsStatusHandler)
+
+		// Demo scenarios for hackathon flow
+		r.Route("/demo", func(r chi.Router) {
+			r.Post("/threat-wave", handleThreatWaveScenario)
+			r.Post("/phishing-scenario", handlePhishingScenario)
+			r.Post("/incident-scenario", handleIncidentScenario)
+		})
 	})
 
 	// ── Server ──
@@ -1212,6 +1233,56 @@ func fetchJSONMap(client *http.Client, endpoint string) (map[string]interface{},
 	return out, nil
 }
 
+func doJSONRequest(ctx context.Context, client *http.Client, method, endpoint string, payload interface{}) (map[string]interface{}, int, error) {
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return nil, 0, err
+		}
+		body = bytes.NewReader(raw)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, 0, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	var out map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil && err != io.EOF {
+		return nil, resp.StatusCode, err
+	}
+	if out == nil {
+		out = map[string]interface{}{}
+	}
+	return out, resp.StatusCode, nil
+}
+
+func boolFromMap(m map[string]interface{}, key string) bool {
+	if m == nil {
+		return false
+	}
+	v, ok := m[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
+}
+
+func demoScenarioID(name string) string {
+	return fmt.Sprintf("%s-%s", name, time.Now().UTC().Format("20060102T150405"))
+}
+
 func syntheticAlertsPayload() map[string]interface{} {
 	now := time.Now()
 	alertTypes := []string{"Lateral Movement", "C2 Beacon", "Credential Theft", "Ransomware", "Data Exfiltration", "Phishing", "SQL Injection", "Port Scan"}
@@ -1243,6 +1314,9 @@ func syntheticAlertsPayload() map[string]interface{} {
 		"total":        len(alerts),
 		"is_live":      false,
 		"degraded":     true,
+		"source_breakdown": map[string]int{
+			"synthetic": len(alerts),
+		},
 		"rollout_mode": "synthetic",
 		"generated_at": now.UTC().Format(time.RFC3339),
 	}
@@ -1396,6 +1470,7 @@ func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
 	alerts := make([]map[string]interface{}, 0, 100)
 	threatLive := false
 	incidentLive := false
+	sourceBreakdown := map[string]int{}
 
 	// Pull live threats from threat-detection.
 	if payload, err := fetchJSONMap(client, services["threat-detection"].URL+"/threats/recent?limit=50"); err == nil {
@@ -1439,6 +1514,7 @@ func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
 					"confidence":          floatFromMap(th, "score"),
 					"source":              "threat-detection",
 				})
+				sourceBreakdown["threat-detection"]++
 			}
 			threatLive = true
 		}
@@ -1481,6 +1557,7 @@ func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
 					"confidence":      confidenceFromSeverity(severity),
 					"source":          "incident-response",
 				})
+				sourceBreakdown["incident-response"]++
 			}
 			incidentLive = true
 		}
@@ -1491,6 +1568,7 @@ func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
 		"total":        len(alerts),
 		"is_live":      threatLive || incidentLive,
 		"degraded":     !threatLive && !incidentLive,
+		"source_breakdown": sourceBreakdown,
 		"rollout_mode": mode,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
@@ -1500,6 +1578,365 @@ func liveAlertsHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		alertFeedSourceTotal.WithLabelValues("degraded").Inc()
 	}
+}
+
+func handleThreatWaveScenario(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	scenarioID := demoScenarioID("threat-wave")
+	now := time.Now().UTC()
+
+	events := []map[string]interface{}{
+		{
+			"src_ip":          "10.0.22.14",
+			"dst_ip":          "10.0.5.42",
+			"dst_port":        445,
+			"protocol":        "TCP",
+			"bytes_sent":      280000,
+			"bytes_recv":      145000,
+			"duration_ms":     9000,
+			"user_agent":      "lateral-move-smb",
+			"payload_entropy": 3.6,
+			"timestamp":       now.Format(time.RFC3339),
+		},
+		{
+			"src_ip":          "10.0.5.42",
+			"dst_ip":          "198.51.100.77",
+			"dst_port":        4444,
+			"protocol":        "TCP",
+			"bytes_sent":      164,
+			"bytes_recv":      96,
+			"duration_ms":     1800,
+			"user_agent":      "beacon-shell",
+			"payload_entropy": 7.2,
+			"timestamp":       now.Add(2 * time.Second).Format(time.RFC3339),
+		},
+		{
+			"src_ip":          "10.0.5.42",
+			"dst_ip":          "203.0.113.80",
+			"dst_port":        443,
+			"protocol":        "TCP",
+			"bytes_sent":      18250000,
+			"bytes_recv":      220000,
+			"duration_ms":     64000,
+			"user_agent":      "archive-sync",
+			"payload_entropy": 5.4,
+			"timestamp":       now.Add(4 * time.Second).Format(time.RFC3339),
+		},
+		{
+			"src_ip":          "10.0.9.91",
+			"dst_ip":          "10.0.5.10",
+			"dst_port":        22,
+			"protocol":        "TCP",
+			"bytes_sent":      640,
+			"bytes_recv":      24,
+			"duration_ms":     120,
+			"user_agent":      "ssh-brute",
+			"payload_entropy": 4.1,
+			"timestamp":       now.Add(6 * time.Second).Format(time.RFC3339),
+		},
+		{
+			"src_ip":          "10.0.18.33",
+			"dst_ip":          "10.0.5.18",
+			"dst_port":        5985,
+			"protocol":        "TCP",
+			"bytes_sent":      220000,
+			"bytes_recv":      94000,
+			"duration_ms":     11000,
+			"user_agent":      "winrm-pivot",
+			"payload_entropy": 3.9,
+			"timestamp":       now.Add(8 * time.Second).Format(time.RFC3339),
+		},
+		{
+			"src_ip":          "10.0.5.42",
+			"dst_ip":          "198.51.100.88",
+			"dst_port":        8080,
+			"protocol":        "TCP",
+			"bytes_sent":      200,
+			"bytes_recv":      128,
+			"duration_ms":     2100,
+			"user_agent":      "stage-2-c2",
+			"payload_entropy": 6.7,
+			"timestamp":       now.Add(10 * time.Second).Format(time.RFC3339),
+		},
+	}
+
+	detectionsTriggered := 0
+	submitted := 0
+	uniqueSources := map[string]struct{}{}
+	techniqueCounts := map[string]int{}
+	errors := make([]string, 0)
+
+	for _, event := range events {
+		payload, status, err := doJSONRequest(r.Context(), client, http.MethodPost, services["threat-detection"].URL+"/analyze/network", event)
+		if err != nil || status >= http.StatusBadRequest {
+			if err != nil {
+				errors = append(errors, err.Error())
+			} else {
+				errors = append(errors, fmt.Sprintf("threat-detection returned %d", status))
+			}
+			continue
+		}
+		submitted++
+		srcIP := stringFromMap(event, "src_ip")
+		if srcIP != "" {
+			uniqueSources[srcIP] = struct{}{}
+		}
+		if boolFromMap(payload, "is_threat") {
+			detectionsTriggered++
+		}
+		primaryTechnique := stringFromMap(payload, "primary_technique")
+		if primaryTechnique != "" {
+			techniqueCounts[primaryTechnique]++
+		}
+	}
+
+	firewallSignals := []map[string]interface{}{
+		{"src_ip": "10.0.5.42", "technique": "c2_beacon", "confidence": 0.97, "dst_ports": []int{4444}},
+		{"src_ip": "10.0.5.42", "technique": "data_exfiltration", "confidence": 0.96, "dst_ports": []int{443}},
+		{"src_ip": "10.0.18.33", "technique": "lateral_movement", "confidence": 0.91, "dst_ports": []int{5985}},
+	}
+
+	firewallActions := 0
+	for _, signal := range firewallSignals {
+		payload, status, err := doJSONRequest(r.Context(), client, http.MethodPost, services["cognitive-firewall"].URL+"/analyze/behavior", signal)
+		if err != nil || status >= http.StatusBadRequest {
+			continue
+		}
+		firewallActions += int(intFromMap(payload, "rules_generated"))
+	}
+
+	if submitted == 0 {
+		writeJSON(w, http.StatusBadGateway, map[string]interface{}{
+			"status":      "error",
+			"scenario_id": scenarioID,
+			"message":     "Threat wave could not reach the detection pipeline.",
+			"errors":      errors,
+		})
+		return
+	}
+
+	status := "ok"
+	message := fmt.Sprintf("Injected %d high-signal events into live detection and activated %d firewall responses.", submitted, firewallActions)
+	if len(errors) > 0 {
+		status = "partial"
+		message = fmt.Sprintf("Injected %d events with partial upstream degradation. Alerts and telemetry should still update.", submitted)
+	}
+
+	dominantTechniques := make([]string, 0, len(techniqueCounts))
+	for technique := range techniqueCounts {
+		dominantTechniques = append(dominantTechniques, technique)
+	}
+	sort.Strings(dominantTechniques)
+
+	affectedEntities := make([]string, 0, len(uniqueSources))
+	for srcIP := range uniqueSources {
+		affectedEntities = append(affectedEntities, srcIP)
+	}
+	sort.Strings(affectedEntities)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":            status,
+		"scenario_id":       scenarioID,
+		"message":           message,
+		"affected_entities": affectedEntities,
+		"results": map[string]interface{}{
+			"events_submitted":      submitted,
+			"detections_triggered":  detectionsTriggered,
+			"firewall_actions":      firewallActions,
+			"campaign_sources":      len(affectedEntities),
+			"dominant_techniques":   dominantTechniques,
+			"generated_at":          time.Now().UTC().Format(time.RFC3339),
+		},
+		"errors": errors,
+	})
+}
+
+func handlePhishingScenario(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	scenarioID := demoScenarioID("phishing-scenario")
+
+	emailPayload := map[string]interface{}{
+		"sender":  "ceo-office@secure-micros0ft.com",
+		"subject": "URGENT: Wire transfer verification required immediately",
+		"text":    "Executive finance request. Verify your corporate account login immediately to approve the pending wire transfer invoice before access expires.",
+	}
+	urlPayload := map[string]interface{}{
+		"url": "http://micros0ft.com/verify/login",
+	}
+	psychPayload := map[string]interface{}{
+		"user_id":               "vip-cfo-001",
+		"display_name":          "Priya CFO",
+		"department":            "Finance",
+		"role":                  "Chief Financial Officer",
+		"seniority_level":       9,
+		"financial_authority":   true,
+		"public_exposure_score": 0.82,
+		"email_open_rate":       0.78,
+		"phishing_sim_fail_rate": 0.63,
+		"past_incidents":        1,
+		"access_level":          5,
+		"travel_frequency":      4.0,
+		"work_hours_variance":   0.65,
+		"social_connections":    220,
+	}
+	intelPayload := map[string]interface{}{
+		"ioc":  "micros0ft.com",
+		"type": "domain",
+	}
+
+	emailResult, emailStatus, emailErr := doJSONRequest(r.Context(), client, http.MethodPost, services["anti-phishing"].URL+"/analyze/email", emailPayload)
+	urlResult, urlStatus, urlErr := doJSONRequest(r.Context(), client, http.MethodPost, services["anti-phishing"].URL+"/analyze/url", urlPayload)
+	psychResult, psychStatus, psychErr := doJSONRequest(r.Context(), client, http.MethodPost, services["anti-phishing"].URL+"/analyze/psychographic", psychPayload)
+	intelResult, intelStatus, intelErr := doJSONRequest(r.Context(), client, http.MethodPost, services["anti-phishing"].URL+"/intel/enrich", intelPayload)
+
+	maliciousEmail := emailErr == nil && emailStatus < http.StatusBadRequest && strings.ToLower(stringFromMap(emailResult, "label")) != "legitimate"
+	maliciousURL := urlErr == nil && urlStatus < http.StatusBadRequest && boolFromMap(urlResult, "is_malicious")
+
+	incidentID := ""
+	escalated := false
+	errors := make([]string, 0)
+	for _, item := range []struct {
+		err    error
+		status int
+		label  string
+	}{
+		{emailErr, emailStatus, "email"},
+		{urlErr, urlStatus, "url"},
+		{psychErr, psychStatus, "psychographic"},
+		{intelErr, intelStatus, "intel"},
+	} {
+		if item.err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", item.label, item.err))
+			continue
+		}
+		if item.status >= http.StatusBadRequest {
+			errors = append(errors, fmt.Sprintf("%s returned %d", item.label, item.status))
+		}
+	}
+
+	if maliciousEmail || maliciousURL {
+		incidentPayload := map[string]interface{}{
+			"alert_type":   "phishing_detected",
+			"severity":     "high",
+			"source_ip":    "198.51.100.23",
+			"host":         "mail-gateway-01",
+			"description":  "Finance-themed phishing lure escalated from the hackathon demo scenario.",
+		}
+		incidentResult, incidentStatus, incidentErr := doJSONRequest(r.Context(), client, http.MethodPost, services["incident-response"].URL+"/incidents", incidentPayload)
+		if incidentErr == nil && incidentStatus < http.StatusBadRequest {
+			incidentID = stringFromMap(incidentResult, "id")
+			escalated = incidentID != ""
+		} else if incidentErr != nil {
+			errors = append(errors, fmt.Sprintf("incident escalation: %v", incidentErr))
+		} else {
+			errors = append(errors, fmt.Sprintf("incident escalation returned %d", incidentStatus))
+		}
+	}
+
+	if emailErr != nil && urlErr != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]interface{}{
+			"status":      "error",
+			"scenario_id": scenarioID,
+			"message":     "Phishing scenario could not reach the anti-phishing services.",
+			"errors":      errors,
+		})
+		return
+	}
+
+	status := "ok"
+	message := "Analyzed a finance-themed phishing lure and escalated it into an incident."
+	if !escalated {
+		status = "partial"
+		message = "Analyzed the phishing lure, but incident escalation needs attention."
+	}
+	if len(errors) > 0 && status == "ok" {
+		status = "partial"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":      status,
+		"scenario_id": scenarioID,
+		"message":     message,
+		"incident_id": incidentID,
+		"affected_entities": []string{
+			"ceo-office@secure-micros0ft.com",
+			"micros0ft.com",
+			"mail-gateway-01",
+		},
+		"results": map[string]interface{}{
+			"email_label":               stringFromMap(emailResult, "label"),
+			"email_confidence":          floatFromMap(emailResult, "confidence"),
+			"url_risk_score":            floatFromMap(urlResult, "risk_score"),
+			"url_malicious":             boolFromMap(urlResult, "is_malicious"),
+			"psychographic_risk_tier":   stringFromMap(psychResult, "risk_tier"),
+			"psychographic_risk_score":  floatFromMap(psychResult, "risk_score"),
+			"intel_reputation_score":    floatFromMap(intelResult, "reputation_score"),
+			"escalated":                 escalated,
+		},
+		"errors": errors,
+	})
+}
+
+func handleIncidentScenario(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	scenarioID := demoScenarioID("incident-scenario")
+
+	incidentPayload := map[string]interface{}{
+		"alert_type":   "ransomware_detected",
+		"severity":     "critical",
+		"source_ip":    "185.220.101.34",
+		"host":         "fin-srv-03",
+		"description":  "Simulated ransomware containment scenario for the hackathon demo.",
+	}
+
+	incidentResult, statusCode, err := doJSONRequest(r.Context(), client, http.MethodPost, services["incident-response"].URL+"/incidents", incidentPayload)
+	if err != nil || statusCode >= http.StatusBadRequest {
+		message := "Incident scenario could not create a new incident."
+		if err != nil {
+			message = err.Error()
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]interface{}{
+			"status":      "error",
+			"scenario_id": scenarioID,
+			"message":     message,
+		})
+		return
+	}
+
+	incidentID := stringFromMap(incidentResult, "id")
+	time.Sleep(1200 * time.Millisecond)
+
+	incidentDetail, _, _ := doJSONRequest(r.Context(), client, http.MethodGet, services["incident-response"].URL+"/incidents/"+incidentID, nil)
+	auditPayload, _, _ := doJSONRequest(r.Context(), client, http.MethodGet, services["incident-response"].URL+"/audit/incidents/"+incidentID, nil)
+
+	playbookRun, _ := incidentDetail["playbook_run"].(map[string]interface{})
+	stepCount := 0
+	if rawSteps, ok := playbookRun["steps"].([]interface{}); ok {
+		stepCount = len(rawSteps)
+	}
+	auditEntries := 0
+	if rawEntries, ok := auditPayload["entries"].([]interface{}); ok {
+		auditEntries = len(rawEntries)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":      "ok",
+		"scenario_id": scenarioID,
+		"message":     "Created a critical ransomware incident and launched automated containment.",
+		"incident_id": incidentID,
+		"affected_entities": []string{
+			"fin-srv-03",
+			"185.220.101.34",
+		},
+		"results": map[string]interface{}{
+			"severity":          stringFromMap(incidentDetail, "severity"),
+			"incident_status":   stringFromMap(incidentDetail, "status"),
+			"playbook":          "ransomware_response",
+			"execution_status":  stringFromMap(playbookRun, "status"),
+			"playbook_steps":    stepCount,
+			"audit_entries":     auditEntries,
+		},
+	})
 }
 
 // ── Ephemeral Pod TTL Handler ─────────────────

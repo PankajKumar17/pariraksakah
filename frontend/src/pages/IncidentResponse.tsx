@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+
 // ── Types ──────────────────────────────────────
 
 interface Playbook {
@@ -86,9 +88,104 @@ const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
   resolved: { bg: 'bg-green-500/10', text: 'text-green-400' },
 };
 
+function titleFromAlertType(alertType: string, host: string) {
+  const label = (alertType || 'security incident').replace(/_/g, ' ');
+  return `${label.replace(/\b\w/g, (ch) => ch.toUpperCase())} - ${host || 'unassigned host'}`;
+}
+
+function playbookFromAlertType(alertType: string) {
+  const type = (alertType || '').toLowerCase();
+  if (type.includes('ransomware')) return 'ransomware_response';
+  if (type.includes('lateral')) return 'lateral_movement_response';
+  if (type.includes('exfil')) return 'data_exfiltration_response';
+  if (type.includes('phishing')) return 'phishing_response';
+  return 'generic_response';
+}
+
+function formatTimeLabel(input?: string) {
+  if (!input) return '--:--:--';
+  const dt = new Date(input);
+  if (Number.isNaN(dt.getTime())) return input;
+  return dt.toLocaleTimeString();
+}
+
+function buildLiveIncidentEvents(raw: any): IncidentEvent[] {
+  const events: IncidentEvent[] = [];
+
+  if (raw?.created_at) {
+    events.push({
+      timestamp: formatTimeLabel(raw.created_at),
+      action: 'Alert Triggered',
+      actor: 'Gateway',
+      detail: raw.description || `${raw.alert_type || 'incident'} reported`,
+    });
+  }
+
+  const run = raw?.playbook_run;
+  if (run?.started_at) {
+    events.push({
+      timestamp: formatTimeLabel(run.started_at),
+      action: 'Playbook Started',
+      actor: 'SOAR Engine',
+      detail: `${run.playbook_name || playbookFromAlertType(raw?.alert_type)} initiated`,
+    });
+  }
+
+  if (Array.isArray(run?.steps)) {
+    run.steps.forEach((step: any, index: number) => {
+      events.push({
+        timestamp: run?.started_at ? formatTimeLabel(run.started_at) : `T+${index + 1}`,
+        action: String(step?.name || 'Playbook Step').replace(/_/g, ' '),
+        actor: step?.connector ? String(step.connector).replace(/_/g, ' ') : 'SOAR Engine',
+        detail: step?.output || `${step?.action || 'execute'} completed`,
+      });
+    });
+  }
+
+  if (run?.completed_at) {
+    events.push({
+      timestamp: formatTimeLabel(run.completed_at),
+      action: 'Containment Update',
+      actor: 'SOAR Engine',
+      detail: `Execution ${run.status || 'completed'} for ${run.playbook_name || 'playbook'}`,
+    });
+  }
+
+  if (events.length === 0) {
+    events.push({
+      timestamp: formatTimeLabel(raw?.created_at),
+      action: 'Incident Created',
+      actor: 'System',
+      detail: raw?.description || 'Awaiting orchestration details.',
+    });
+  }
+
+  return events;
+}
+
+function hydrateIncident(raw: any): Incident {
+  const normalizedStatus = String(raw?.status || 'active').toLowerCase();
+  const status: Incident['status'] =
+    normalizedStatus === 'resolved'
+      ? 'resolved'
+      : normalizedStatus === 'contained'
+      ? 'contained'
+      : 'active';
+
+  return {
+    id: String(raw?.id || `INC-${Date.now()}`),
+    title: titleFromAlertType(String(raw?.alert_type || 'security incident'), String(raw?.host || raw?.source_ip || 'host')),
+    severity: (String(raw?.severity || 'medium').toLowerCase() as Incident['severity']),
+    status,
+    playbook: String(raw?.playbook_run?.playbook_name || playbookFromAlertType(String(raw?.alert_type || ''))),
+    started_at: String(raw?.created_at || new Date().toISOString()),
+    events: buildLiveIncidentEvents(raw),
+  };
+}
+
 // ── Forensic Evidence Chain ──────────────────────
 
-function ForensicEvidenceChain({ incidentId }: { incidentId: string }) {
+function ForensicEvidenceChain({ incidentId, authToken }: { incidentId: string; authToken: string }) {
   const [chain, setChain] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -98,7 +195,9 @@ function ForensicEvidenceChain({ incidentId }: { incidentId: string }) {
     
     // We try to fetch the real backend audit trail, fallback to a mocked UI demo 
     // to guarantee the satellite timestamp visual is present.
-    fetch(`http://localhost:8080/audit/incidents/${incidentId}`)
+    fetch(`${API_BASE}/api/v1/soar/audit/incidents/${incidentId}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+    })
       .then(res => res.json())
       .then(data => {
         if (!mounted) return;
@@ -150,7 +249,7 @@ function ForensicEvidenceChain({ incidentId }: { incidentId: string }) {
       .finally(() => setLoading(false));
       
     return () => { mounted = false; };
-  }, [incidentId]);
+  }, [incidentId, authToken]);
 
   return (
     <div className="card mt-4">
@@ -165,11 +264,11 @@ function ForensicEvidenceChain({ incidentId }: { incidentId: string }) {
       ) : (
         <div className="space-y-3">
           {chain.map((entry: any, i: number) => (
-            <div key={i} className="bg-[#0F172A] p-3 rounded border border-slate-700/50 hover:border-slate-600 transition-colors">
+            <div key={i} className="bg-[#F5F8FF] p-3 rounded border border-[#E2E9FA] hover:bg-[#EEF4FF] transition-colors">
                <div className="flex justify-between items-start mb-2">
                  <div>
-                   <div className="text-sm font-semibold text-gray-200">{entry.step_name || entry.StepName}</div>
-                   <div className="text-[10px] text-blue-400 mt-0.5 uppercase tracking-wide">
+                   <div className="text-sm font-semibold text-slate-800">{entry.step_name || entry.StepName}</div>
+                   <div className="text-[10px] text-[#517EF9] mt-0.5 uppercase tracking-wide">
                      [{entry.connector || entry.Connector || 'sys'}] {entry.action || entry.Action}
                    </div>
                  </div>
@@ -180,25 +279,25 @@ function ForensicEvidenceChain({ incidentId }: { incidentId: string }) {
                      {entry.status || entry.Status || 'success'}
                    </span>
                    {entry.elapsed_ms != null && (
-                     <div className="text-[10px] text-gray-500 mt-1 font-mono">{entry.elapsed_ms}ms</div>
+                     <div className="text-[10px] text-slate-500 mt-1 font-mono">{entry.elapsed_ms}ms</div>
                    )}
                  </div>
                </div>
                
-               <div className="mt-2 pt-2 border-t border-slate-700/50 space-y-1.5">
-                 <div className="flex justify-between items-center text-[10px] font-mono text-gray-500">
+               <div className="mt-2 pt-2 border-t border-[#E2E9FA] space-y-1.5">
+                 <div className="flex justify-between items-center text-[10px] font-mono text-slate-500">
                    <span className="flex items-center gap-1">⏱ Satellite Time</span>
-                   <span className="text-orange-300 bg-orange-500/10 px-1.5 rounded">{entry.satellite_time}</span>
+                   <span className="text-amber-700 bg-amber-100 px-1.5 rounded">{entry.satellite_time}</span>
                  </div>
-                 <div className="flex justify-between items-center text-[10px] font-mono text-gray-500">
+                 <div className="flex justify-between items-center text-[10px] font-mono text-slate-500">
                    <span className="flex items-center gap-1">🔗 Tx Hash</span>
-                   <span className="text-gray-400 truncate max-w-[150px] sm:max-w-[200px]" title={entry.hash_signature}>
+                   <span className="text-slate-600 truncate max-w-[150px] sm:max-w-[200px]" title={entry.hash_signature}>
                      {entry.hash_signature}
                    </span>
                  </div>
                  {(entry.evidence_url || entry.EvidenceURL) && (
                    <div className="pt-1.5">
-                     <a href={entry.evidence_url || entry.EvidenceURL} target="_blank" rel="noreferrer" className="text-[10px] text-[#6C63FF] hover:text-[#8881FF] transition-colors flex items-center gap-1">
+                     <a href={entry.evidence_url || entry.EvidenceURL} target="_blank" rel="noreferrer" className="text-[10px] text-[#517EF9] hover:text-[#436FE8] transition-colors flex items-center gap-1">
                        View Enriched Evidence ↗
                      </a>
                    </div>
@@ -216,11 +315,60 @@ function ForensicEvidenceChain({ incidentId }: { incidentId: string }) {
 
 export default function IncidentResponse() {
   const [selectedIncident, setSelectedIncident] = useState<Incident>(ACTIVE_INCIDENTS[0]);
+  const [playbooks, setPlaybooks] = useState<Playbook[]>(PLAYBOOKS);
+  const [incidents, setIncidents] = useState<Incident[]>(ACTIVE_INCIDENTS);
+  const [authToken] = useState<string>(() => localStorage.getItem('dashboard_access_token') || '');
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<{ role: string; text: string; demo?: boolean }[]>([
     { role: 'system', text: 'AI Investigator ready. Connected to Claude 3 Haiku for forensic log analysis.' },
   ]);
   const [isThinking, setIsThinking] = useState(false);
+
+  React.useEffect(() => {
+    if (!authToken) return;
+
+    let cancelled = false;
+    const loadLiveData = async () => {
+      try {
+        const [playbooksRes, incidentsRes] = await Promise.all([
+          fetch(`${API_BASE}/api/v1/soar/playbooks`, { headers: { Authorization: `Bearer ${authToken}` } }),
+          fetch(`${API_BASE}/api/v1/incidents`, { headers: { Authorization: `Bearer ${authToken}` } }),
+        ]);
+
+        if (playbooksRes.ok) {
+          const payload = await playbooksRes.json();
+          const nextPlaybooks = (Array.isArray(payload?.playbooks) ? payload.playbooks : []).map((pb: any) => ({
+            name: String(pb?.name || 'playbook'),
+            trigger: Array.isArray(pb?.triggers) ? String(pb.triggers[0] || pb.name || 'manual') : String(pb?.trigger || pb?.name || 'manual'),
+            severity: String(pb?.severity || (String(pb?.name || '').includes('ransomware') || String(pb?.name || '').includes('data_exfiltration') ? 'critical' : String(pb?.name || '').includes('lateral') ? 'high' : 'medium')),
+            steps: Number(pb?.step_count || pb?.steps || 0),
+            last_run: pb?.last_run ? String(pb.last_run) : undefined,
+          }));
+          if (!cancelled && nextPlaybooks.length > 0) {
+            setPlaybooks(nextPlaybooks);
+          }
+        }
+
+        if (incidentsRes.ok) {
+          const payload = await incidentsRes.json();
+          const nextIncidents = (Array.isArray(payload?.incidents) ? payload.incidents : []).map(hydrateIncident);
+          if (!cancelled && nextIncidents.length > 0) {
+            setIncidents(nextIncidents);
+            setSelectedIncident((current) => nextIncidents.find((incident: Incident) => incident.id === current.id) || nextIncidents[0]);
+          }
+        }
+      } catch {
+        // keep fallback demo data
+      }
+    };
+
+    loadLiveData();
+    const interval = window.setInterval(loadLiveData, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [authToken]);
 
   // Auto-generate investigation summary when incident changes
   React.useEffect(() => {
@@ -237,7 +385,7 @@ export default function IncidentResponse() {
     setIsThinking(true);
 
     try {
-      const res = await fetch('http://localhost:8080/api/ai/investigate', {
+      const res = await fetch(`${API_BASE}/api/ai/investigate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -283,7 +431,7 @@ export default function IncidentResponse() {
         <div className="col-span-12 lg:col-span-4 card">
           <div className="card-header">Playbook Library</div>
           <div className="space-y-2">
-            {PLAYBOOKS.map((pb) => (
+            {playbooks.map((pb) => (
               <div
                 key={pb.name}
                 className="flex flex-wrap items-start sm:items-center justify-between gap-2 p-3 bg-[#F5F8FF] border border-[#E2E9FA] rounded-lg hover:bg-[#EEF4FF] transition-colors"
@@ -315,7 +463,7 @@ export default function IncidentResponse() {
           <div className="card">
             <div className="card-header">Active Incidents</div>
             <div className="space-y-2">
-              {ACTIVE_INCIDENTS.map((inc) => {
+              {incidents.map((inc) => {
                 const statusStyle = STATUS_STYLES[inc.status];
                 return (
                   <div
@@ -374,12 +522,17 @@ export default function IncidentResponse() {
             </div>
           </div>
           
-          <ForensicEvidenceChain incidentId={selectedIncident.id} />
+          <ForensicEvidenceChain incidentId={selectedIncident.id} authToken={authToken} />
         </div>
 
-        {/* Incident Chat / Copilot */}
+        {/* AI Investigator panel (Claude API notes) */}
         <div className="col-span-12 card">
-          <div className="card-header">Incident Copilot</div>
+          <div className="card-header flex items-center justify-between">
+            <span>AI Investigator</span>
+            <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full border border-indigo-200 uppercase tracking-wider font-semibold">
+              Claude Notes
+            </span>
+          </div>
           <div className="h-48 overflow-y-auto space-y-3 mb-3 p-3 bg-[#F5F8FF] border border-[#E2E9FA] rounded-lg">
             {chatMessages.map((msg, i) => (
               <div
@@ -410,14 +563,14 @@ export default function IncidentResponse() {
               </div>
             ))}
             {isThinking && (
-              <div className="flex justify-start items-end gap-2 text-gray-500">
+              <div className="flex justify-start items-end gap-2 text-slate-500">
                 <div className="w-6 h-6 rounded bg-indigo-500/20 border border-indigo-500/50 flex items-center justify-center text-xs ml-0">
                   AI
                 </div>
-                <div className="flex gap-1 bg-[#1E293B] px-3 py-2 rounded-lg border border-slate-700 pb-3">
-                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                <div className="flex gap-1 bg-white px-3 py-2 rounded-lg border border-[#D8E3F7] pb-3">
+                  <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                  <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                  <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div>
                 </div>
               </div>
             )}
