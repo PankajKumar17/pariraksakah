@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "FingerprintUpdate",
+  "namespace": "com.cybershield.dna",
+  "fields": [
+    {"name": "component_id", "type": "string"},
+    {"name": "recorded_at", "type": "string"},
+    {"name": "fingerprint_hash", "type": "string"},
+    {"name": "hardware_hash", "type": "string"},
+    {"name": "software_hash", "type": "string"},
+    {"name": "behavioral_hash", "type": "string"},
+    {"name": "network_hash", "type": "string"},
+    {"name": "temporal_hash", "type": "string"},
+    {"name": "delta_score", "type": "double"}
+  ]
+}

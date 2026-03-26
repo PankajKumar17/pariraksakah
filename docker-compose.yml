@@ -380,6 +380,81 @@ services:
     restart: unless-stopped
     networks: [cybershield-net]
 
+  # ─── Security DNA Cryptographic System Identity Platform ─────
+  dna-identity-engine:
+    build:
+      context: ./services/security-dna/identity-engine
+      dockerfile: Dockerfile
+    ports: ["8050:8050"]
+    environment:
+      <<: *common-env
+      DNA_PORT: "8050"
+    depends_on: [kafka, timescaledb]
+    restart: unless-stopped
+    networks: [cybershield-net]
+    privileged: true # required for hardware / proc reading
+    pid: "host"
+
+  dna-certificate-authority:
+    build:
+      context: ./services/security-dna/certificate-authority
+      dockerfile: Dockerfile
+    ports: ["8051:8051"]
+    environment:
+      <<: *common-env
+      CA_PORT: "8051"
+    depends_on: [timescaledb, kafka]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-fingerprint-monitor:
+    build:
+      context: ./services/security-dna/fingerprint-monitor
+      dockerfile: Dockerfile
+    ports: ["8052:8052"]
+    environment:
+      <<: *common-env
+      MONITOR_PORT: "8052"
+    depends_on: [timescaledb, neo4j, kafka]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-trust-registry:
+    build:
+      context: ./services/security-dna/trust-registry
+      dockerfile: Dockerfile
+    ports: ["8053:8053"]
+    environment:
+      <<: *common-env
+      TRUST_PORT: "8053"
+    depends_on: [timescaledb, neo4j, kafka]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-anomaly-detector:
+    build:
+      context: ./services/security-dna/anomaly-detector
+      dockerfile: Dockerfile
+    ports: ["8054:8054"]
+    environment:
+      <<: *common-env
+      ANOMALY_PORT: "8054"
+    depends_on: [kafka, timescaledb, neo4j]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
+  dna-dashboard-api:
+    build:
+      context: ./services/security-dna/dashboard-api
+      dockerfile: Dockerfile
+    ports: ["8055:8055"]
+    environment:
+      <<: *common-env
+      DASHBOARD_API_PORT: "8055"
+    depends_on: [timescaledb, neo4j]
+    restart: unless-stopped
+    networks: [cybershield-net]
+
 volumes:
   prediction-models:
   postgres-data:

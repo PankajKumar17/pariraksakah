@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "AnomalyDetected",
+  "namespace": "com.cybershield.dna",
+  "fields": [
+    {"name": "anomaly_id", "type": "string"},
+    {"name": "component_id", "type": "string"},
+    {"name": "attack_type", "type": "string"},
+    {"name": "severity", "type": "string"},
+    {"name": "detected_at", "type": "string"},
+    {"name": "details", "type": "string"},
+    {"name": "confidence", "type": "double"}
+  ]
+}

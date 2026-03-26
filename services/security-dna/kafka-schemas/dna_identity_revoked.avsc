@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "IdentityRevoked",
+  "namespace": "com.cybershield.dna",
+  "fields": [
+    {"name": "component_id", "type": "string"},
+    {"name": "certificate_serial", "type": "string"},
+    {"name": "revoked_at", "type": "string"},
+    {"name": "reason", "type": "string"},
+    {"name": "delta_score", "type": "double"}
+  ]
+}

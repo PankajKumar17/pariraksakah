@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "IdentityVerified",
+  "namespace": "com.cybershield.dna",
+  "fields": [
+    {"name": "verification_id", "type": "string"},
+    {"name": "component_id", "type": "string"},
+    {"name": "verifier_id", "type": "string"},
+    {"name": "verified_at", "type": "string"},
+    {"name": "verification_method", "type": "string"},
+    {"name": "result", "type": "boolean"},
+    {"name": "anomaly_score", "type": "double"}
+  ]
+}
