@@ -41,6 +41,30 @@ docker compose up -d --build
 node scripts/live_event_feeder.js
 ```
 
+## One-Command Safe Attack Simulation (Recommended)
+
+Run this from repository root when you want a deterministic, judge-friendly sequence:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Invoke-JudgeSafeDemo.ps1
+```
+
+This script performs:
+
+1. protection checks (unauthorized and invalid-token access blocked),
+2. threat-wave simulation,
+3. phishing escalation simulation,
+4. incident-response simulation,
+5. optional controlled rate-limit burst check.
+
+Extended scenarios:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Invoke-JudgeSafeDemo.ps1 -IncludeExtendedScenarios
+```
+
+More details: [JUDGE_SAFE_ATTACK_DEMO.md](./JUDGE_SAFE_ATTACK_DEMO.md)
+
 ## 2-Minute Judge Script
 
 1. "This is our AI cyber defense command center. It brings threat detection, phishing defense, and automated response into one operating surface."

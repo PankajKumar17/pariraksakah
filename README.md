@@ -244,6 +244,16 @@ If you want the alert stream to continue between judge conversations:
 node scripts/live_event_feeder.js
 ```
 
+### 5b. One-command safe attack simulation for judges
+
+Run this from repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Invoke-JudgeSafeDemo.ps1
+```
+
+This executes protection checks plus the core threat, phishing, and incident scenarios in one sequence. For details, see [JUDGE_SAFE_ATTACK_DEMO.md](./JUDGE_SAFE_ATTACK_DEMO.md).
+
 ### 6. Suggested pitch order
 
 1. Dashboard overview and service health
