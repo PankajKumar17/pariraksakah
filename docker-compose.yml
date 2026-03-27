@@ -660,18 +660,6 @@ services:
     restart: unless-stopped
     networks: [cybershield-net]
 
-  neuro-dashboard-api:
-    build:
-      context: ./services/neuro-dashboard-api
-      dockerfile: Dockerfile
-    ports: ["8078:8078"]
-    environment:
-      <<: *common-env
-      NEURO_DASHBOARD_PORT: "8078"
-    depends_on: [kafka, timescaledb, neo4j, prometheus]
-    restart: unless-stopped
-    networks: [cybershield-net]
-
   # ─── Quantum Security Suite ─────────────────────
   quantum-crypto-engine:
     build:

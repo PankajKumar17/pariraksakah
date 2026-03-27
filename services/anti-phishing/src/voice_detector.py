@@ -29,6 +29,21 @@ class VoiceDeepfakeDetector:
         self.model_path = model_path
         self._loaded = False
 
+    def _fallback_mfcc(self, audio_data: np.ndarray) -> np.ndarray:
+        """Lightweight FFT-based fallback when librosa is unavailable or fails at runtime."""
+        n_fft = 512
+        hop = 160
+        frames = max((len(audio_data) - n_fft) // hop + 1, 1)
+        mfccs = np.zeros((40, frames))
+        for i in range(frames):
+            start = i * hop
+            frame = audio_data[start:start + n_fft]
+            if len(frame) < n_fft:
+                frame = np.pad(frame, (0, n_fft - len(frame)))
+            spectrum = np.abs(np.fft.rfft(frame))[:40]
+            mfccs[:len(spectrum), i] = np.log1p(spectrum)
+        return mfccs
+
     def load_model(self):
         """Load pre-trained deepfake detection model."""
         try:
@@ -73,27 +88,25 @@ class VoiceDeepfakeDetector:
 
     def extract_mfcc(self, audio_data: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
         """Extract MFCC features from raw audio samples."""
+        if audio_data.size == 0:
+            return np.zeros((40, 1))
         try:
             import librosa
             mfccs = librosa.feature.mfcc(y=audio_data.astype(float), sr=sample_rate, n_mfcc=40)
             return mfccs
-        except ImportError:
-            # Simplified fallback: use FFT-based pseudo-MFCCs
-            n_fft = 512
-            hop = 160
-            frames = (len(audio_data) - n_fft) // hop + 1
-            mfccs = np.zeros((40, max(frames, 1)))
-            for i in range(max(frames, 1)):
-                start = i * hop
-                frame = audio_data[start:start + n_fft]
-                if len(frame) < n_fft:
-                    frame = np.pad(frame, (0, n_fft - len(frame)))
-                spectrum = np.abs(np.fft.rfft(frame))[:40]
-                mfccs[:len(spectrum), i] = np.log1p(spectrum)
-            return mfccs
+        except Exception as e:
+            logger.warning("MFCC extraction fallback engaged: %s", e)
+            return self._fallback_mfcc(audio_data)
 
     def _compute_spectral_features(self, audio_data: np.ndarray, sr: int = 16000) -> dict:
         """Compute spectral features that differ between real and synthetic speech."""
+        if audio_data.size == 0:
+            return {
+                "spectral_centroid": 0.0,
+                "spectral_rolloff": 0.0,
+                "spectral_flatness": 0.0,
+                "zero_crossing_rate": 0.0,
+            }
         spectrum = np.abs(np.fft.rfft(audio_data))
         freqs = np.fft.rfftfreq(len(audio_data), 1.0 / sr)
 

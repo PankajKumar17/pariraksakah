@@ -335,6 +335,7 @@ async def detonate_url(req: DetonateRequest):
         "network_requests_count": len(result.network_requests),
         "javascript_alerts": result.javascript_alerts,
         "screenshot_path": result.screenshot_path,
+        "error_message": result.error_message,
         "detonation_time_ms": result.detonation_time_ms,
         "latency_ms": round((time.time() - t0) * 1000, 2),
     }

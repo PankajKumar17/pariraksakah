@@ -72,6 +72,7 @@ export function connectWebSocket(
   onDisconnect?: () => void,
 ): WebSocket {
   const ws = new WebSocket(`${WS_BASE}/events`);
+  const meta = ws as WebSocket & { __manualClose?: boolean };
 
   ws.onopen = () => {
     console.log('[WS] Connected');
@@ -88,12 +89,19 @@ export function connectWebSocket(
   };
 
   ws.onclose = () => {
+    if (meta.__manualClose) {
+      onDisconnect?.();
+      return;
+    }
     console.log('[WS] Disconnected — reconnecting in 3s');
     onDisconnect?.();
     setTimeout(() => connectWebSocket(onMessage, onConnect, onDisconnect), 3000);
   };
 
   ws.onerror = (err) => {
+    if (meta.__manualClose || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+      return;
+    }
     console.error('[WS] Error:', err);
   };
 

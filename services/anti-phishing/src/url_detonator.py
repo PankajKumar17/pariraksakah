@@ -9,10 +9,12 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
+from urllib.parse import urljoin
 
 logger = logging.getLogger("cybershield.antiphishing.url_detonator")
 
@@ -29,6 +31,7 @@ class DetonationResult:
     risk_score: float = 0.0
     verdict: str = "unknown"
     detonation_time_ms: float = 0.0
+    error_message: Optional[str] = None
 
 
 class URLDetonator:
@@ -48,6 +51,7 @@ class URLDetonator:
         except ImportError:
             logger.warning("Playwright not installed — returning stub result")
             result.verdict = "skipped"
+            result.error_message = "playwright_not_installed"
             return result
 
         network_log: List[Dict] = []
@@ -109,17 +113,64 @@ class URLDetonator:
                 await browser.close()
 
         except Exception as e:
-            logger.error("Detonation failed for %s: %s", url, e)
-            result.verdict = "error"
+            logger.warning("Playwright detonation failed for %s: %s", url, e)
+            try:
+                await self._http_fallback_detonation(
+                    url=url,
+                    timeout_ms=timeout_ms,
+                    result=result,
+                    original_error=str(e),
+                )
+            except Exception as fallback_error:
+                logger.error(
+                    "Fallback detonation failed for %s: %s",
+                    url,
+                    fallback_error,
+                )
+                result.verdict = "error"
+                result.error_message = (
+                    f"{e}; fallback_failed={fallback_error}"
+                )
 
         elapsed = (datetime.now(timezone.utc) - start).total_seconds() * 1000
         result.detonation_time_ms = elapsed
 
-        # Score
-        result.risk_score = self._compute_risk(result)
-        result.verdict = "malicious" if result.risk_score >= 0.6 else "clean"
+        if result.verdict not in {"error", "skipped"}:
+            result.risk_score = self._compute_risk(result)
+            result.verdict = "malicious" if result.risk_score >= 0.6 else "clean"
 
         return result
+
+    async def _http_fallback_detonation(
+        self,
+        url: str,
+        timeout_ms: int,
+        result: DetonationResult,
+        original_error: str,
+    ) -> None:
+        """Best-effort fallback when a headless browser is unavailable."""
+        import httpx
+
+        timeout_seconds = max(timeout_ms / 1000.0, 1.0)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_seconds) as client:
+            response = await client.get(url)
+
+        result.final_url = str(response.url)
+        result.dom_snapshot = response.text[:50000]
+        result.network_requests = [
+            {
+                "url": str(item.url),
+                "method": item.request.method,
+                "resource_type": "document",
+                "status_code": item.status_code,
+            }
+            for item in [*response.history, response]
+        ]
+        result.credential_forms = self._detect_credential_forms_from_html(
+            html=response.text,
+            base_url=str(response.url),
+        )
+        result.error_message = f"{original_error}; degraded_mode=http_fallback"
 
     async def _detect_credential_forms(self, page) -> List[Dict]:
         """Detect login/credential harvest forms in the page."""
@@ -154,6 +205,47 @@ class URLDetonator:
         except Exception:
             pass
         return forms
+
+    def _detect_credential_forms_from_html(self, html: str, base_url: str) -> List[Dict]:
+        """Detect credential-looking forms from static HTML when browser execution is unavailable."""
+        forms: List[Dict] = []
+        for form_match in re.finditer(r"<form\b([^>]*)>(.*?)</form>", html, re.IGNORECASE | re.DOTALL):
+            attrs = form_match.group(1) or ""
+            body = form_match.group(2) or ""
+            inputs = []
+            for input_match in re.finditer(r"<input\b([^>]*)>", body, re.IGNORECASE | re.DOTALL):
+                raw_attrs = input_match.group(1) or ""
+                itype = self._extract_html_attr(raw_attrs, "type") or "text"
+                iname = self._extract_html_attr(raw_attrs, "name") or ""
+                inputs.append({"type": itype.lower(), "name": iname})
+
+            has_password = any(i["type"] == "password" for i in inputs)
+            has_email = any(
+                i["type"] in {"email", "text"} and any(
+                    kw in i["name"].lower()
+                    for kw in ("email", "user", "login", "account")
+                )
+                for i in inputs
+            )
+            if not (has_password or has_email):
+                continue
+
+            action = self._extract_html_attr(attrs, "action") or ""
+            forms.append(
+                {
+                    "action": urljoin(base_url, action) if action else base_url,
+                    "has_password": has_password,
+                    "has_email": has_email,
+                    "inputs": inputs,
+                }
+            )
+        return forms
+
+    @staticmethod
+    def _extract_html_attr(raw_attrs: str, attr_name: str) -> str:
+        pattern = rf'{attr_name}\s*=\s*["\']?([^"\'>\s]+)'
+        match = re.search(pattern, raw_attrs, re.IGNORECASE)
+        return match.group(1) if match else ""
 
     def _compute_risk(self, result: DetonationResult) -> float:
         """Score detonation results."""

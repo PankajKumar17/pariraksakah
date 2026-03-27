@@ -5,6 +5,7 @@ Multi-label output: phishing, spear-phishing, BEC, legitimate.
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -35,6 +36,9 @@ class PhishingClassifier:
         self.tokenizer = None
         self.model_path = model_path or "distilbert-base-uncased"
         self._loaded = False
+        self.remote_downloads_enabled = os.getenv(
+            "ANTI_PHISHING_ALLOW_REMOTE_MODEL_DOWNLOAD", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
     def load_model(self):
         """Lazy-load model to save memory at startup."""
@@ -44,18 +48,32 @@ class PhishingClassifier:
                 AutoTokenizer,
             )
 
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            local_only = not self.remote_downloads_enabled
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_path,
+                local_files_only=local_only,
+            )
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_path,
                 num_labels=len(PHISHING_LABELS),
                 id2label=ID2LABEL,
                 label2id=LABEL2ID,
+                local_files_only=local_only,
             )
             self.model.eval()
             self._loaded = True
-            logger.info("Phishing classifier loaded from %s", self.model_path)
+            logger.info(
+                "Phishing classifier loaded from %s (local_only=%s)",
+                self.model_path,
+                local_only,
+            )
         except Exception as e:
-            logger.warning("Model load failed (%s), using heuristic fallback", e)
+            logger.warning(
+                "Model load failed for %s (%s); using heuristic fallback. "
+                "Set ANTI_PHISHING_ALLOW_REMOTE_MODEL_DOWNLOAD=true to allow model downloads.",
+                self.model_path,
+                e,
+            )
             self._loaded = False
 
     def _heuristic_classify(self, text: str) -> ClassificationResult:

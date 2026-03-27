@@ -257,7 +257,7 @@ export default function Dashboard({ authToken }: { authToken: string }) {
         status: 'active',
       });
     }
-  }, [markApi]);
+  }, [authToken, markApi]);
 
   const fetchBioTrust = useCallback(async () => {
     if (!authToken) {
@@ -579,7 +579,12 @@ export default function Dashboard({ authToken }: { authToken: string }) {
         () => setWsConnected(false),
       );
     } catch { /* ws not available */ }
-    return () => ws?.close();
+    return () => {
+      if (ws) {
+        (ws as WebSocket & { __manualClose?: boolean }).__manualClose = true;
+        ws.close();
+      }
+    };
   }, []);
 
   const timeSeriesData = useMemo(
@@ -1104,7 +1109,15 @@ export default function Dashboard({ authToken }: { authToken: string }) {
         {/* ── Phase 1: Social Engineering Panel ──────────── */}
         {phishingStats && (
           <div className="col-span-12 md:col-span-6 lg:col-span-4 card"  id="social-engineering-panel">
-            <div className="card-header">🎭 Social Engineering Detection</div>
+            <div className="card-header flex items-center justify-between gap-3">
+              <span>🎭 Social Engineering Detection</span>
+              <a
+                href="/anti-phishing"
+                className="rounded-full border border-[#D8E3F7] bg-[#EFF4FF] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#517EF9] hover:bg-[#E3EDFF]"
+              >
+                Open Workbench
+              </a>
+            </div>
             <div className="space-y-2 text-sm">
               <StatRow label="Voice samples analyzed" value={phishingStats.voice_analyzed?.toLocaleString() ?? '—'} color="text-purple-400" />
               <StatRow label="Deepfakes detected" value={phishingStats.deepfakes_detected?.toLocaleString() ?? '—'} color="text-red-400" />

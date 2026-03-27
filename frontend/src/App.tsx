@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import ThreatHunting from './pages/ThreatHunting';
 import Innovations from './pages/Innovations';
 import IncidentResponse from './pages/IncidentResponse';
+import AntiPhishing from './pages/AntiPhishing';
 import NeuromorphicBrain from './pages/NeuromorphicBrain';
 import QuantumSecurity from './pages/QuantumSecurity';
 import SIEMDashboard from './pages/SIEMDashboard';
@@ -16,6 +17,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const navItems = [
   { path: '/' as const, label: 'Dashboard' },
   { path: '/threat-hunting' as const, label: 'Threat Hunting' },
+  { path: '/anti-phishing' as const, label: 'Anti-Phishing' },
   { path: '/innovations' as const, label: 'Innovations' },
   { path: '/incidents' as const, label: 'Incidents' },
   { path: '/neuromorphic' as const, label: 'Neuromorphic Brain' },
@@ -43,6 +45,7 @@ export default function App() {
 
     let cancelled = false;
     fetch(`${API_BASE}/api/v1/auth/verify`, {
+      method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
     })
       .then(async (res) => {
@@ -184,7 +187,7 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <div className={`min-h-screen ${darkMode ? 'bg-[#F7FAFF] text-slate-900' : 'bg-[#F7FAFF] text-slate-900'}`}>
         {/* Top Nav */}
         <nav className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-3 border-b border-[#D8E3F7] bg-white/95 backdrop-blur">
@@ -236,6 +239,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={isAuthed ? <Dashboard authToken={authToken} /> : <Navigate to="/blocked" replace />} />
             <Route path="/threat-hunting" element={isAuthed ? <ThreatHunting /> : <Navigate to="/blocked" replace />} />
+            <Route path="/anti-phishing" element={isAuthed ? <AntiPhishing authToken={authToken} /> : <Navigate to="/blocked" replace />} />
             <Route path="/innovations" element={isAuthed ? <Innovations /> : <Navigate to="/blocked" replace />} />
             <Route path="/incidents" element={isAuthed ? <IncidentResponse authToken={authToken} /> : <Navigate to="/blocked" replace />} />
             <Route path="/neuromorphic" element={isAuthed ? <NeuromorphicBrain /> : <Navigate to="/blocked" replace />} />

@@ -1,6 +1,6 @@
 # Pariraksakah Project Structure and Status
 
-Updated: 2026-03-24
+Updated: 2026-03-26
 
 ## 1) Project Structure (High-Level)
 
@@ -52,11 +52,17 @@ What is made:
 -   Anti-phishing service supports email and URL analysis endpoints.
 -   Service tracks analyzed/blocked counters and exposes stats.
 -   URL risk and email classification flows are available through gateway public endpoints.
+-   Sandbox URL detonation endpoint, voice/image deepfake analysis, psychographic risk scoring, threat-intel enrichment, and analyst feedback endpoints are implemented in the service.
+-   Analyst feedback is persisted to a JSONL feedback store for later retraining export.
+-   Voice analysis now runs successfully even when the librosa stack fails at runtime by using an FFT-based fallback extractor.
+-   URL detonation now degrades to HTTP fetch plus credential-form inspection when Playwright Chromium is unavailable, instead of returning a hard runtime failure.
+-   The phishing classifier no longer blocks service startup on external Hugging Face downloads; it falls back to heuristic classification when the transformer model is not locally cached.
 
 What is left:
 
--   Deepfake/voice and broader social-engineering modules are only partially represented compared to platform claims.
--   Threat intel enrichment and sandbox detonation are not fully exposed as end-to-end validated pipeline outputs in dashboard.
+-   Deepfake/voice and broader social-engineering modules are implemented but still need stronger model quality validation and dashboard surfacing.
+-   Threat intel enrichment and sandbox detonation need fuller end-to-end validation in dashboard workflows and production-style operational monitoring.
+-   Full browser-based detonation still depends on Chromium being present in the container image or installed at runtime; in network-restricted environments the service runs in degraded detonation mode.
 -   Model lifecycle (continuous retraining/feedback loop) is not yet surfaced as operational workflow.
 
 ### D. Incident response & automated remediation platforms
