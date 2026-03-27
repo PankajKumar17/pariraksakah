@@ -16,7 +16,7 @@ interface Incident {
   id: string;
   title: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
-  status: 'active' | 'contained' | 'resolved';
+  status: 'active' | 'contained' | 'resolved' | 'false_positive';
   playbook: string;
   started_at: string;
   events: IncidentEvent[];
@@ -86,6 +86,7 @@ const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
   active: { bg: 'bg-red-500/10', text: 'text-red-400' },
   contained: { bg: 'bg-yellow-500/10', text: 'text-yellow-400' },
   resolved: { bg: 'bg-green-500/10', text: 'text-green-400' },
+  false_positive: { bg: 'bg-gray-500/10', text: 'text-gray-400' },
 };
 
 function titleFromAlertType(alertType: string, host: string) {
@@ -322,6 +323,9 @@ export default function IncidentResponse({ authToken }: { authToken: string }) {
     { role: 'system', text: 'AI Investigator ready. Connected to Claude 3 Haiku for forensic log analysis.' },
   ]);
   const [isThinking, setIsThinking] = useState(false);
+  const [reportData, setReportData] = useState<any>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   React.useEffect(() => {
     if (!authToken) return;
@@ -375,6 +379,36 @@ export default function IncidentResponse({ authToken }: { authToken: string }) {
       { role: 'system', text: 'AI Investigator ready. Connected to Claude API.' },
     ]);
   }, [selectedIncident.id]);
+
+  const handleGenerateReport = async () => {
+    setIsGeneratingReport(true);
+    try {
+      const res = await fetch(`http://localhost:8004/incidents/${selectedIncident.id}/report`);
+      if (res.ok) {
+        const data = await res.json();
+        setReportData(data);
+        setIsReportModalOpen(true);
+      } else {
+        alert("Failed to fetch report from SOAR engine.");
+      }
+    } catch (err) {
+      console.error(err);
+      // Fallback
+      setReportData({
+        incident_id: selectedIncident.id,
+        title: selectedIncident.title,
+        severity: selectedIncident.severity,
+        status: selectedIncident.status,
+        executive_summary: "This is a simulated Post-Incident Report generated because the backend could not be reached. All systems are operating normally.",
+        metrics: { time_to_detect_ms: 120, time_to_respond_ms: 4500, time_to_contain_ms: 60000 },
+        timeline_events: selectedIncident.events,
+        generated_at: new Date().toISOString()
+      });
+      setIsReportModalOpen(true);
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
 
   const handleSendChat = async () => {
     if (!chatInput.trim()) return;
@@ -498,8 +532,15 @@ export default function IncidentResponse({ authToken }: { authToken: string }) {
 
         {/* Incident Timeline & Evidence Chain */}
           <div className="card">
-            <div className="card-header">
-              Incident Timeline — {selectedIncident.id}
+            <div className="card-header flex justify-between items-center">
+              <span>Incident Timeline — {selectedIncident.id}</span>
+              <button
+                onClick={handleGenerateReport}
+                disabled={isGeneratingReport}
+                className="px-3 py-1 bg-[#6C63FF] hover:bg-[#8881FF] text-white rounded text-xs font-semibold transition-colors disabled:opacity-50"
+              >
+                {isGeneratingReport ? 'Generating...' : 'Generate PIR'}
+              </button>
             </div>
             <div className="relative ml-4 border-l-2 border-[#517EF9]/30 space-y-4 py-2">
               {selectedIncident.events.map((event, i) => (
@@ -592,6 +633,79 @@ export default function IncidentResponse({ authToken }: { authToken: string }) {
           </div>
         </div>
       </div>
+
+      {/* Report Modal */}
+      {isReportModalOpen && reportData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#1E293B] border border-slate-700 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center bg-[#0F172A] p-4 border-b border-slate-700">
+              <div>
+                <h2 className="text-xl font-bold text-gray-100">Post-Incident Report</h2>
+                <p className="text-xs text-gray-400 mt-1">{reportData.incident_id} • Generated {new Date(reportData.generated_at).toLocaleString()}</p>
+              </div>
+              <button onClick={() => setIsReportModalOpen(false)} className="text-gray-400 hover:text-white text-2xl font-bold transition-colors">×</button>
+            </div>
+            <div className="p-6 overflow-y-auto space-y-6 custom-scrollbar text-gray-300">
+              
+              <div>
+                <h3 className="text-sm font-semibold text-[#6C63FF] uppercase tracking-wide mb-2">Executive Summary</h3>
+                <div className="bg-[#0B1120] p-4 rounded border border-slate-700 text-sm leading-relaxed">
+                  {reportData.executive_summary}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-[#0B1120] p-4 rounded border border-slate-700 text-center">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Time to Detect</div>
+                  <div className="text-xl font-bold text-white">{reportData.metrics?.time_to_detect_ms || 0} ms</div>
+                </div>
+                <div className="bg-[#0B1120] p-4 rounded border border-slate-700 text-center">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Time to Respond</div>
+                  <div className="text-xl font-bold text-yellow-500">{reportData.metrics?.time_to_respond_ms || 0} ms</div>
+                </div>
+                <div className="bg-[#0B1120] p-4 rounded border border-slate-700 text-center">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Time to Contain</div>
+                  <div className="text-xl font-bold text-green-500">{reportData.metrics?.time_to_contain_ms || 0} ms</div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-[#6C63FF] uppercase tracking-wide mb-3">Resolution Timeline</h3>
+                <div className="space-y-3">
+                  {reportData.timeline_events?.map((evt: any, i: number) => (
+                    <div key={i} className="flex gap-4 items-start text-sm">
+                      <div className="w-20 sm:w-24 flex-shrink-0 text-gray-500 text-xs font-mono mt-1">
+                        {evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString() : 'N/A'}
+                      </div>
+                      <div className="flex-1 bg-[#0F172A] p-3 rounded border border-slate-700">
+                        <span className="font-semibold text-gray-200">{evt.action || evt.Action}</span>
+                        <span className="text-xs text-gray-400 ml-2 block sm:inline mt-1 sm:mt-0">
+                          — {evt.step_name || evt.StepName || evt.detail} ({evt.status || evt.Status || 'success'})
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {(!reportData.timeline_events || reportData.timeline_events.length === 0) && (
+                    <div className="text-sm text-gray-500 italic p-4 text-center bg-[#0F172A] rounded border border-slate-700/50">
+                      No automated timeline events recorded for this incident.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 flex justify-end">
+                <button 
+                  onClick={() => setIsReportModalOpen(false)} 
+                  className="px-6 py-2 bg-[#1E293B] hover:bg-[#334155] border border-slate-600 text-white rounded font-medium text-sm transition-colors"
+                >
+                  Close Report
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

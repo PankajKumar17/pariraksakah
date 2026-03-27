@@ -24,6 +24,7 @@ import (
 
 	"github.com/cybershield-x/incident-response/internal/api"
 	"github.com/cybershield-x/incident-response/internal/audit"
+	"github.com/cybershield-x/incident-response/internal/filter"
 	"github.com/cybershield-x/incident-response/internal/queue"
 	"github.com/cybershield-x/incident-response/internal/soar"
 	"github.com/cybershield-x/incident-response/internal/soar/connectors"
@@ -37,11 +38,14 @@ type Incident struct {
 	Severity    string            `json:"severity"`
 	SourceIP    string            `json:"source_ip"`
 	Host        string            `json:"host"`
-	Description string            `json:"description"`
-	Status      string            `json:"status"` // open,investigating,contained,resolved
-	PlaybookRun *PlaybookExecution `json:"playbook_run,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	Description     string            `json:"description"`
+	Status          string            `json:"status"` // open,investigating,contained,resolved,false_positive
+	IsFalsePositive bool              `json:"is_false_positive"`
+	ConfidenceScore float64           `json:"confidence_score,omitempty"`
+	FilterReason    string            `json:"filter_reason,omitempty"`
+	PlaybookRun     *PlaybookExecution `json:"playbook_run,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 type PlaybookExecution struct {
@@ -71,16 +75,34 @@ type CreateIncidentRequest struct {
 	Description string `json:"description"`
 }
 
+type IncidentReport struct {
+	IncidentID        string         `json:"incident_id"`
+	Title             string         `json:"title"`
+	Severity          string         `json:"severity"`
+	Status            string         `json:"status"`
+	Metrics           IncidentMetrics`json:"metrics"`
+	ExecutiveSummary  string         `json:"executive_summary"`
+	TimelineEvents    []audit.Entry  `json:"timeline_events"`
+	GeneratedAt       time.Time      `json:"generated_at"`
+}
+
+type IncidentMetrics struct {
+	TimeToDetectMs  int64 `json:"time_to_detect_ms"` // Diff btn attack and alert (Assumed instantaneous for demo)
+	TimeToRespondMs int64 `json:"time_to_respond_ms"`// Diff btn alert creation and playbook start
+	TimeToContainMs int64 `json:"time_to_contain_ms"`// Diff btn alert creation and playbook completion
+}
+
 // ── In-memory store ────────────────────────────
 
 var (
 	incidents   = make(map[string]*Incident)
 	incidentsMu sync.RWMutex
 	stats       = map[string]int{
-		"total_incidents":  0,
-		"auto_contained":  0,
-		"resolved":        0,
-		"mean_ttr_seconds": 0,
+		"total_incidents":          0,
+		"auto_contained":           0,
+		"resolved":                 0,
+		"mean_ttr_seconds":         0,
+		"false_positives_filtered": 0,
 	}
 )
 
@@ -92,6 +114,7 @@ var (
 	rollbackMgr       *soar.RollbackManager
 	jobStore          queue.JobStore
 	workerPool        *queue.Worker
+	filterEngine      *filter.FilterEngine
 )
 
 // ── Playbook store ─────────────────────────────
@@ -296,13 +319,25 @@ func createIncident(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   time.Now(),
 	}
 
+	filterRes := filterEngine.Evaluate(req.AlertType, req.Severity, req.SourceIP, req.Description)
+	if filterRes.IsFalsePositive {
+		inc.Status = "false_positive"
+		inc.IsFalsePositive = true
+		inc.ConfidenceScore = filterRes.ConfidenceScore
+		inc.FilterReason = filterRes.Reason
+		
+		incidentsMu.Lock()
+		stats["false_positives_filtered"]++
+		incidentsMu.Unlock()
+	}
+
 	incidentsMu.Lock()
 	incidents[inc.ID] = inc
 	stats["total_incidents"]++
 	incidentsMu.Unlock()
 
 	// Auto-execute playbook for critical/high incidents via job queue
-	if req.Severity == "critical" || req.Severity == "high" {
+	if !inc.IsFalsePositive && (req.Severity == "critical" || req.Severity == "high") {
 		playbook := selectPlaybook(req.AlertType)
 		alertCtx := map[string]any{
 			"host":       req.Host,
@@ -350,6 +385,50 @@ func getIncident(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(inc)
+}
+
+func generateIncidentReport(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	
+	incidentsMu.RLock()
+	inc, ok := incidents[id]
+	incidentsMu.RUnlock()
+	
+	if !ok {
+		http.Error(w, `{"error":"incident not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Fetch Audit Trail
+	entries, err := auditStore.QueryByIncident(id)
+	if err != nil {
+		entries = []audit.Entry{}
+	}
+
+	metrics := IncidentMetrics{
+		TimeToDetectMs: 0, // Instantaneous in our mocked data
+	}
+
+	if inc.PlaybookRun != nil {
+		metrics.TimeToRespondMs = inc.PlaybookRun.StartedAt.Sub(inc.CreatedAt).Milliseconds()
+		if inc.PlaybookRun.CompletedAt != nil {
+			metrics.TimeToContainMs = inc.PlaybookRun.CompletedAt.Sub(inc.CreatedAt).Milliseconds()
+		}
+	}
+
+	report := IncidentReport{
+		IncidentID:       inc.ID,
+		Title:            fmt.Sprintf("%s on %s", inc.AlertType, inc.Host),
+		Severity:         inc.Severity,
+		Status:           inc.Status,
+		Metrics:          metrics,
+		ExecutiveSummary: fmt.Sprintf("Incident %s involving %s was classified as %s severity. Current status is %s. %d playbook steps were requested.", inc.ID, inc.AlertType, inc.Severity, inc.Status, len(entries)),
+		TimelineEvents:   entries,
+		GeneratedAt:      time.Now(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
 }
 
 func executeIncidentPlaybook(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +507,7 @@ func main() {
 	auditStore = audit.NewMemoryStore()
 	rollbackMgr = soar.NewRollbackManager(connectorRegistry, auditStore)
 	jobStore = queue.NewMemoryJobStore()
+	filterEngine = filter.NewEngine()
 
 	log.Printf("[SOAR] Connector simulation mode: %v", connectorRegistry.IsSimulated())
 
@@ -475,6 +555,7 @@ func main() {
 	r.Post("/incidents", createIncident)
 	r.Get("/incidents", listIncidents)
 	r.Get("/incidents/{id}", getIncident)
+	r.Get("/incidents/{id}/report", generateIncidentReport)
 	r.Post("/incidents/{id}/execute", executeIncidentPlaybook)
 	r.Get("/playbooks", listPlaybooks)
 

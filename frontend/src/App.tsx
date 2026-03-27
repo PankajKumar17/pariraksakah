@@ -6,6 +6,9 @@ import Innovations from './pages/Innovations';
 import IncidentResponse from './pages/IncidentResponse';
 import NeuromorphicBrain from './pages/NeuromorphicBrain';
 import QuantumSecurity from './pages/QuantumSecurity';
+import SIEMDashboard from './pages/SIEMDashboard';
+import LiveCapture from './pages/LiveCapture';
+import LogAggregation from './pages/LogAggregation';
 import { useAppStore } from './store/useAppStore';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -17,6 +20,9 @@ const navItems = [
   { path: '/incidents' as const, label: 'Incidents' },
   { path: '/neuromorphic' as const, label: 'Neuromorphic Brain' },
   { path: '/quantum' as const, label: 'Quantum Security' },
+  { path: '/siem' as const, label: '📡 SIEM' },
+  { path: '/live-capture' as const, label: '🎯 Live Capture' },
+  { path: '/logs' as const, label: '📑 Log Aggregation' },
 ];
 
 export default function App() {
@@ -234,6 +240,9 @@ export default function App() {
             <Route path="/incidents" element={isAuthed ? <IncidentResponse authToken={authToken} /> : <Navigate to="/blocked" replace />} />
             <Route path="/neuromorphic" element={isAuthed ? <NeuromorphicBrain /> : <Navigate to="/blocked" replace />} />
             <Route path="/quantum" element={isAuthed ? <QuantumSecurity /> : <Navigate to="/blocked" replace />} />
+            <Route path="/siem" element={isAuthed ? <SIEMDashboard /> : <Navigate to="/blocked" replace />} />
+            <Route path="/live-capture" element={isAuthed ? <LiveCapture /> : <Navigate to="/blocked" replace />} />
+            <Route path="/logs" element={isAuthed ? <LogAggregation /> : <Navigate to="/blocked" replace />} />
             <Route path="/blocked" element={<div className="text-sm text-slate-600">Please login from the landing page.</div>} />
           </Routes>
         </main>
